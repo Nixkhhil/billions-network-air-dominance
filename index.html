@@ -70,14 +70,14 @@ setInterval(() => {
 // 👾 Enemies spawn every 2.6s
 setInterval(() => {
   enemies.push({ x: Math.random() * (canvas.width - 60), y: -60, width: 60, height: 60, hp: 3 });
-}, 2600);
+}, 1500);
 
 // 💣 Enemies fire every 2s
 setInterval(() => {
   enemies.forEach(e => {
     enemyBullets.push({ x: e.x + e.width / 2 - 5, y: e.y + e.height, width: 10, height: 20 });
   });
-}, 2000);
+}, 1000);
 
 // ⚡ Powers every 2s
 setInterval(() => {
@@ -107,7 +107,7 @@ setInterval(() => {
       });
     }
   }
-}, 1500);
+}, 800);
 
 // Swipe + drag control
 let startX = null, dragging = false;
@@ -258,3 +258,4 @@ draw();
 </script>
 </body>
 </html>
+
