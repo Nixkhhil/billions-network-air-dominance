@@ -1,220 +1,300 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Aircraft Game</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: black;
-      overflow: hidden;
-      touch-action: none;
-    }
-    canvas {
-      display: block;
-      margin: auto;
-      width: 100vw;
-      height: 100vh;
-      background: black;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aircraft Game</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: black;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: url('./assets/background.png') no-repeat center center / cover;
+  }
+  #popup {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: Arial;
+    color: white;
+    font-size: 20px;
+    background: rgba(0,0,0,0.6);
+    padding: 8px 14px;
+    border-radius: 8px;
+    display: none;
+  }
+</style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="360" height="640"></canvas>
-  <script>
-    const canvas = document.getElementById("gameCanvas");
-    const ctx = canvas.getContext("2d");
+<canvas id="gameCanvas" width="480" height="720"></canvas>
+<div id="popup"></div>
 
-    // Responsive scaling
-    function resizeCanvas() {
-      const ratio = 360 / 640;
-      let w = window.innerWidth;
-      let h = window.innerHeight;
-      if (w / h > ratio) w = h * ratio;
-      else h = w / ratio;
-      canvas.style.width = w + "px";
-      canvas.style.height = h + "px";
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let playerImg = new Image();
+let enemyImg = new Image();
+let bossImg = new Image();
+let bulletGreen = new Image();
+let bulletRed = new Image();
+let powerDouble = new Image();
+let powerShield = new Image();
+let powerLife = new Image();
+let heart = new Image();
+
+playerImg.src = "./assets/player.png";
+enemyImg.src = "./assets/enemy.png";
+bossImg.src = "./assets/boss.png";
+bulletGreen.src = "./assets/bullet_green.png";
+bulletRed.src = "./assets/bullet_red.png";
+powerDouble.src = "./assets/power_double_fire.png";
+powerShield.src = "./assets/power_shield.png";
+powerLife.src = "./assets/power_extra_life.png";
+heart.src = "./assets/heart.png";
+
+const popup = document.getElementById("popup");
+function showPopup(text) {
+  popup.innerText = text;
+  popup.style.display = "block";
+  setTimeout(() => popup.style.display = "none", 1000);
+}
+
+// Player setup
+const player = {
+  x: canvas.width / 2 - 25,
+  y: canvas.height - 100,
+  width: 50,
+  height: 50,
+  speed: 6,
+  bullets: [],
+  fireRate: 200,
+  canFire: true,
+  lives: 3,
+  hitCount: 0,
+  doubleFire: false
+};
+
+// Enemy, boss, power arrays
+let enemies = [];
+let bosses = [];
+let powers = [];
+
+let score = 0;
+let lastEnemySpawn = 0;
+let lastEnemyFire = 0;
+let lastBossSpawn = 0;
+let lastPowerSpawn = 0;
+let gameOver = false;
+
+// Touch control (swipe + drag)
+let startX = 0;
+let dragging = false;
+canvas.addEventListener("touchstart", (e) => {
+  startX = e.touches[0].clientX;
+  dragging = true;
+});
+canvas.addEventListener("touchmove", (e) => {
+  if (!dragging) return;
+  let deltaX = e.touches[0].clientX - startX;
+  player.x += deltaX * 0.2;
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+  startX = e.touches[0].clientX;
+});
+canvas.addEventListener("touchend", () => { dragging = false; });
+
+// Shooting
+function fireBullet() {
+  if (!player.canFire) return;
+  player.canFire = false;
+  player.bullets.push({
+    x: player.x + player.width / 2 - 3,
+    y: player.y,
+    width: 6,
+    height: 20,
+  });
+  if (player.doubleFire) {
+    player.bullets.push({ x: player.x + 10, y: player.y, width: 6, height: 20 });
+    player.bullets.push({ x: player.x + player.width - 16, y: player.y, width: 6, height: 20 });
+  }
+  setTimeout(() => player.canFire = true, player.fireRate);
+}
+
+// Enemy spawn
+function spawnEnemy() {
+  enemies.push({
+    x: Math.random() * (canvas.width - 40),
+    y: -50,
+    width: 40,
+    height: 40,
+    bullets: [],
+  });
+}
+
+// Boss spawn
+function spawnBoss() {
+  bosses.push({
+    x: Math.random() * (canvas.width - 100),
+    y: -100,
+    width: 100,
+    height: 100,
+    bullets: [],
+  });
+}
+
+// Power spawn
+function spawnPower() {
+  const powerTypes = ["double", "shield", "life"];
+  const type = powerTypes[Math.floor(Math.random() * powerTypes.length)];
+  powers.push({
+    x: Math.random() * (canvas.width - 30),
+    y: -30,
+    width: 30,
+    height: 30,
+    type,
+  });
+}
+
+// Enemy fire
+function enemyFire(enemy) {
+  enemy.bullets.push({
+    x: enemy.x + enemy.width / 2 - 3,
+    y: enemy.y + enemy.height,
+    width: 6,
+    height: 20,
+  });
+}
+
+// Boss fire (3 bullets)
+function bossFire(boss) {
+  boss.bullets.push(
+    { x: boss.x + 20, y: boss.y + boss.height, width: 6, height: 20 },
+    { x: boss.x + 50, y: boss.y + boss.height, width: 6, height: 20 },
+    { x: boss.x + 80, y: boss.y + boss.height, width: 6, height: 20 }
+  );
+}
+
+function collision(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+// Game loop
+function update(time) {
+  if (gameOver) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
+
+  fireBullet();
+
+  // Player bullets
+  player.bullets.forEach((b, i) => {
+    b.y -= 8;
+    ctx.drawImage(bulletGreen, b.x, b.y, b.width, b.height);
+    if (b.y < -20) player.bullets.splice(i, 1);
+  });
+
+  // Faster enemy spawn
+  if (time - lastEnemySpawn > 1800) {
+    spawnEnemy();
+    lastEnemySpawn = time;
+  }
+
+  enemies.forEach((e, i) => {
+    e.y += 2.5;
+    ctx.drawImage(enemyImg, e.x, e.y, e.width, e.height);
+    if (time - lastEnemyFire > 2000) {
+      enemyFire(e);
+      lastEnemyFire = time;
     }
-    window.addEventListener("resize", resizeCanvas);
-    resizeCanvas();
-
-    // ===== Load Images =====
-    const img = {};
-    const load = (n) => { img[n] = new Image(); img[n].src = `assets/${n}.png`; };
-    [
-      "background", "player", "enemy", "boss",
-      "bullet_green", "bullet_red",
-      "power_double_fire", "power_shield", "power_extra_life",
-      "heart"
-    ].forEach(load);
-
-    // ===== Sound =====
-    const bgm = new Audio("sounds/bgm.mpeg");
-    bgm.loop = true;
-    bgm.volume = 0.4;
-    bgm.play().catch(()=>{});
-
-    // ===== Game Variables =====
-    let bullets=[], enemies=[], enemyBullets=[], powers=[];
-    let boss=null;
-    let score=0, lives=3;
-    let hasShield=false, doubleFire=false;
-    let lastEnemySpawn=0, lastEnemyFire=0, lastPlayerFire=0;
-    let lastBossSpawnScore=0, gameOver=false;
-
-    const player = {x:canvas.width/2-25, y:canvas.height-80, w:50, h:50, speed:6, draw(){
-      ctx.drawImage(img.player,this.x,this.y,this.w,this.h);
-    }};
-
-    // ===== Touch controls =====
-    let startX=null;
-    canvas.addEventListener("touchstart",(e)=>{ startX=e.touches[0].clientX; });
-    canvas.addEventListener("touchmove",(e)=>{
-      const diff = e.touches[0].clientX - startX;
-      player.x += diff*0.4;
-      if(player.x<0) player.x=0;
-      if(player.x>canvas.width-player.w) player.x=canvas.width-player.w;
-      startX=e.touches[0].clientX;
+    e.bullets.forEach((b, j) => {
+      b.y += 4;
+      ctx.drawImage(bulletRed, b.x, b.y, b.width, b.height);
+      if (b.y > canvas.height) e.bullets.splice(j, 1);
+      if (collision(b, player)) {
+        e.bullets.splice(j, 1);
+        player.hitCount++;
+        if (player.hitCount >= 3) {
+          player.lives--;
+          player.hitCount = 0;
+          if (player.lives <= 0) gameOver = true;
+        }
+      }
     });
+    player.bullets.forEach((b, j) => {
+      if (collision(b, e)) {
+        enemies.splice(i, 1);
+        player.bullets.splice(j, 1);
+        score += 10;
+      }
+    });
+  });
 
-    // ===== Player Fire =====
-    function playerFire(){
-      if(performance.now()-lastPlayerFire<200)return;
-      lastPlayerFire=performance.now();
-      if(doubleFire){
-        bullets.push({x:player.x+5,y:player.y,w:8,h:20});
-        bullets.push({x:player.x+player.w-13,y:player.y,w:8,h:20});
-      }else{
-        bullets.push({x:player.x+player.w/2-4,y:player.y,w:8,h:20});
+  // Bosses
+  if (score >= 200 && score % 200 === 0 && time - lastBossSpawn > 3000) {
+    spawnBoss();
+    lastBossSpawn = time;
+  }
+  bosses.forEach((b) => {
+    b.y += 1;
+    ctx.drawImage(bossImg, b.x, b.y, b.width, b.height);
+    bossFire(b);
+    b.bullets.forEach((bullet, k) => {
+      bullet.y += 5;
+      ctx.drawImage(bulletRed, bullet.x, bullet.y, bullet.width, bullet.height);
+      if (collision(bullet, player)) {
+        player.lives--;
+        b.bullets.splice(k, 1);
+      }
+    });
+  });
+
+  // Powers
+  if (time - lastPowerSpawn > 2000) {
+    spawnPower();
+    lastPowerSpawn = time;
+  }
+  powers.forEach((p, i) => {
+    p.y += 2;
+    let img = p.type === "double" ? powerDouble : p.type === "shield" ? powerShield : powerLife;
+    ctx.drawImage(img, p.x, p.y, p.width, p.height);
+    if (collision(p, player)) {
+      powers.splice(i, 1);
+      if (p.type === "double") {
+        player.doubleFire = true;
+        showPopup("2X Fire!");
+      } else if (p.type === "shield") {
+        showPopup("Shield!");
+      } else {
+        player.lives++;
+        showPopup("Extra Life!");
       }
     }
+  });
 
-    // ===== Enemies =====
-    function spawnEnemy(){
-      if(performance.now()-lastEnemySpawn<3500)return;
-      lastEnemySpawn=performance.now();
-      enemies.push({x:Math.random()*(canvas.width-40),y:-40,w:40,h:40,speed:2});
-    }
+  // Score & Lives
+  ctx.font = "18px Arial";
+  ctx.fillStyle = "white";
+  ctx.fillText("Score: " + score, 10, 20);
+  for (let i = 0; i < player.lives; i++) {
+    ctx.drawImage(heart, 400 + i * 25, 5, 20, 20);
+  }
 
-    function enemyFire(){
-      if(performance.now()-lastEnemyFire<2000)return;
-      lastEnemyFire=performance.now();
-      enemies.forEach(e=>{
-        enemyBullets.push({x:e.x+e.w/2-4,y:e.y+e.h,w:8,h:20});
-      });
-      if(boss){
-        // boss fires 3 spread bullets
-        for(let i=-1;i<=1;i++){
-          enemyBullets.push({x:boss.x+boss.w/2-4+20*i,y:boss.y+boss.h,w:8,h:20});
-        }
-      }
-    }
+  requestAnimationFrame(update);
+}
 
-    function spawnBoss(){
-      if(score>=lastBossSpawnScore+200){
-        boss={x:canvas.width/2-60,y:50,w:120,h:80,hp:40};
-        lastBossSpawnScore=score;
-      }
-    }
-
-    function spawnPower(x,y){
-      const type=["power_double_fire","power_shield","power_extra_life"][Math.floor(Math.random()*3)];
-      powers.push({type,x,y,w:30,h:30,speed:2});
-    }
-
-    // ===== Update =====
-    function update(){
-      if(gameOver)return;
-      playerFire();
-
-      bullets.forEach(b=>b.y-=8);
-      bullets=bullets.filter(b=>b.y>-20);
-
-      spawnEnemy();
-      enemies.forEach(e=>e.y+=e.speed);
-      enemies=enemies.filter(e=>e.y<canvas.height);
-
-      enemyFire();
-      enemyBullets.forEach(b=>b.y+=5);
-      enemyBullets=enemyBullets.filter(b=>b.y<canvas.height);
-
-      powers.forEach(p=>p.y+=p.speed);
-      powers=powers.filter(p=>p.y<canvas.height);
-
-      spawnBoss();
-      if(boss) boss.x += Math.sin(performance.now()/500)*2;
-
-      // collisions
-      bullets.forEach((b,bi)=>{
-        enemies.forEach((e,ei)=>{
-          if(b.x<e.x+e.w&&b.x+b.w>e.x&&b.y<e.y+e.h&&b.y+b.h>e.y){
-            e.hp=(e.hp||3)-1;
-            bullets.splice(bi,1);
-            if(e.hp<=0){
-              enemies.splice(ei,1);
-              score+=10;
-              if(Math.random()<0.3)spawnPower(e.x,e.y);
-            }
-          }
-        });
-
-        if(boss&&b.x<boss.x+boss.w&&b.x+b.w>boss.x&&b.y<boss.y+boss.h&&b.y+b.h>boss.y){
-          boss.hp--;
-          bullets.splice(bi,1);
-          if(boss.hp<=0){boss=null;score+=100;spawnPower(player.x,100);}
-        }
-      });
-
-      enemyBullets.forEach((b,i)=>{
-        if(b.x<player.x+player.w&&b.x+b.w>player.x&&b.y<player.y+player.h&&b.y+b.h>player.y){
-          enemyBullets.splice(i,1);
-          if(hasShield){hasShield=false;return;}
-          player.hitCount=(player.hitCount||0)+1;
-          if(player.hitCount>=3){
-            lives--;player.hitCount=0;
-            if(lives<=0)gameOver=true;
-          }
-        }
-      });
-
-      powers.forEach((p,i)=>{
-        if(p.x<player.x+player.w&&p.x+p.w>player.x&&p.y<player.y+player.h&&p.y+p.h>player.y){
-          powers.splice(i,1);
-          if(p.type==="power_double_fire")doubleFire=true;
-          else if(p.type==="power_shield")hasShield=true;
-          else if(p.type==="power_extra_life")lives++;
-        }
-      });
-    }
-
-    // ===== Draw =====
-    function draw(){
-      ctx.drawImage(img.background,0,0,canvas.width,canvas.height);
-      player.draw();
-      bullets.forEach(b=>ctx.drawImage(img.bullet_green,b.x,b.y,b.w,b.h));
-      enemies.forEach(e=>ctx.drawImage(img.enemy,e.x,e.y,e.w,e.h));
-      enemyBullets.forEach(b=>ctx.drawImage(img.bullet_red,b.x,b.y,b.w,b.h));
-      powers.forEach(p=>ctx.drawImage(img[p.type],p.x,p.y,p.w,p.h));
-      if(boss)ctx.drawImage(img.boss,boss.x,boss.y,boss.w,boss.h);
-
-      ctx.fillStyle="white";
-      ctx.font="16px Arial";
-      ctx.fillText(`Score: ${score}`,10,20);
-      for(let i=0;i<lives;i++)ctx.drawImage(img.heart,10+i*25,30,20,20);
-      if(hasShield)ctx.fillText("🛡️ Shield",10,70);
-      if(doubleFire)ctx.fillText("🔥 Double Fire",10,90);
-      if(gameOver){
-        ctx.fillStyle="red";
-        ctx.font="28px Arial";
-        ctx.fillText("GAME OVER",canvas.width/2-80,canvas.height/2);
-      }
-    }
-
-    // ===== Main Loop =====
-    function loop(){update();draw();requestAnimationFrame(loop);}
-    loop();
-  </script>
+update(0);
+</script>
 </body>
 </html>
