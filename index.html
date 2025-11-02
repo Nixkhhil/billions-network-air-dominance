@@ -2,13 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Aircraft Game</title>
 
     <style>
-        /* Basic styling to center the game and give it a border */
         body {
-            background-color: #333;
+            background-color: #000;
             color: #fff;
             font-family: Arial, sans-serif;
             display: flex;
@@ -21,59 +20,144 @@
         }
 
         h1 {
-            margin: 1rem;
+            display: none; /* We don't need the title anymore */
         }
 
         canvas {
-            background-color: #000; /* Fallback if background image fails */
+            background-color: #000;
             border: 3px solid #fff;
             border-radius: 5px;
-            /* Cursors are not needed on mobile, but good for testing on PC */
             cursor: none; 
+            /* Make canvas fill the screen */
+            position: absolute;
+            top: 0;
+            left: 0;
         }
     </style>
 </head>
 <body>
-
-    <h1>Aircraft Shooter</h1>
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <canvas id="gameCanvas"></canvas>
 
     <script>
-        // Get the canvas and its 2D rendering context
+        // --- Setup Canvas ---
         const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-
-        // --- Game Variables ---
-        let playerX = canvas.width / 2 - 25; // Start player in middle-bottom
-        let playerY = canvas.height - 70;
-        const playerWidth = 50;
-        const playerHeight = 50;
-
+        const ctx = canvas.getContext('d');
+        
+        // Set canvas to fill the screen
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
         // --- Game State Variables ---
         let playerHealth = 3;
         const maxPlayerHealth = 3;
         let score = 0;
-        let nextBossScore = 200; // The score to reach for the first boss
+        let nextBossScore = 200;
+        let gameStarted = false; // To handle BGM play on first touch
+        let gameOver = false;
+
+        // --- Player ---
+        let playerX = canvas.width / 2 - 25;
+        let playerY = canvas.height - 70;
+        const playerWidth = 50;
+        const playerHeight = 50;
+
+        // --- Scrolling Background ---
+        let bgY = 0;
+        const bgSpeed = 1; // How fast the background scrolls
+
+        // --- Shooting ---
+        let playerBullets = [];
+        let enemyBullets = [];
+        let playerShootTimer = 0;
+        const playerShootCooldown = 15; // Frames (60 = 1 sec)
+        let doubleFireActive = false;
+        let doubleFireTimer = 0;
+
+        // --- Enemies ---
+        let enemies = [];
+        let enemySpawnTimer = 0;
+        const enemySpawnRate = 100; // Lower is faster
+
+        // --- Boss ---
         let bossActive = false;
         let bossHealth = 50;
+        let bossX = canvas.width / 2 - 75;
+        let bossY = -150;
+        let bossWidth = 150;
+        let bossHeight = 150;
+        let bossShootTimer = 0;
+        let bossMovingIn = false;
+
+        // --- Power-ups ---
+        let powerUps = [];
+        let shieldActive = false;
+        let shieldTimer = 0;
 
         // --- Load Assets ---
+        let assetsLoaded = 0;
+        const totalAssets = 11; // UPDATE THIS COUNT
 
-        // Load background image
+        function assetLoaded() {
+            assetsLoaded++;
+            if (assetsLoaded === totalAssets) {
+                // Start the game loop
+                gameLoop(); 
+            }
+        }
+
+        // Load background
         const bgImage = new Image();
         bgImage.src = 'assets/background.png';
+        bgImage.onload = assetLoaded;
 
-        // Load player image
+        // Load player
         const playerImage = new Image();
         playerImage.src = 'assets/player.png';
+        playerImage.onload = assetLoaded;
 
-        // Load heart image
+        // Load heart
         const heartImage = new Image();
         heartImage.src = 'assets/heart.png';
+        heartImage.onload = assetLoaded;
+        
+        // --- NEW ASSETS ---
+        const enemyImage = new Image();
+        enemyImage.src = 'assets/enemy.png';
+        enemyImage.onload = assetLoaded;
+
+        const bossImage = new Image();
+        bossImage.src = 'assets/boss.png';
+        bossImage.onload = assetLoaded;
+
+        const bulletGreenImage = new Image();
+        bulletGreenImage.src = 'assets/bullet_green.png';
+        bulletGreenImage.onload = assetLoaded;
+
+        const bulletRedImage = new Image();
+        bulletRedImage.src = 'assets/bullet_red.png';
+        bulletRedImage.onload = assetLoaded;
+
+        const powerShieldImage = new Image();
+        powerShieldImage.src = 'assets/power_shield.png';
+        powerShieldImage.onload = assetLoaded;
+
+        const powerDoubleImage = new Image();
+        powerDoubleImage.src = 'assets/power_double_fire.png';
+        powerDoubleImage.onload = assetLoaded;
+
+        const powerLifeImage = new Image();
+        powerLifeImage.src = 'assets/power_extra_life.png';
+        powerLifeImage.onload = assetLoaded;
+        
+        // Load BGM
+        const bgm = new Audio('sounds/bgm.mpeg');
+        bgm.loop = true;
+        bgm.volume = 0.5;
+        // We can't play until user interacts, but we count it as loaded
+        assetLoaded(); 
+
 
         // --- Mobile Touch Controls ---
-
-        // Helper function to get touch position relative to the canvas
         function getTouchPos(canvasDom, touchEvent) {
             const rect = canvasDom.getBoundingClientRect();
             return {
@@ -82,190 +166,405 @@
             };
         }
 
-        // Listen for touch start
         canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault(); // Prevent screen from scrolling
+            e.preventDefault(); 
+            
+            // --- NEW: Start BGM on first touch ---
+            if (!gameStarted) {
+                bgm.play().catch(e => console.error("Audio play failed:", e));
+                gameStarted = true;
+            }
+            if (gameOver) {
+                restartGame();
+                return;
+            }
+            // --- End BGM logic ---
+            
             const touchPos = getTouchPos(canvas, e);
-            // Center the player on the touch
             playerX = touchPos.x - playerWidth / 2;
             playerY = touchPos.y - playerHeight / 2;
         }, false);
 
-        // Listen for touch movement
         canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault(); // Prevent screen from scrolling
+            e.preventDefault(); 
+            if (gameOver) return;
             const touchPos = getTouchPos(canvas, e);
-            // Center the player on the touch
             playerX = touchPos.x - playerWidth / 2;
             playerY = touchPos.y - playerHeight / 2;
         }, false);
 
+        
+        // --- Game Logic Functions ---
+
+        function playerShoot() {
+            // Create a new bullet at player's position
+            const bulletX = playerX + playerWidth / 2 - 2.5; // Centered
+            const bulletY = playerY;
+            const bulletWidth = 5;
+            const bulletHeight = 15;
+
+            playerBullets.push({ x: bulletX, y: bulletY, width: bulletWidth, height: bulletHeight });
+
+            if (doubleFireActive) {
+                // Add a second bullet
+                const bulletX2 = playerX + playerWidth / 2 - 12.5; // Slightly left
+                const bulletX3 = playerX + playerWidth / 2 + 7.5;  // Slightly right
+                playerBullets.push({ x: bulletX2, y: bulletY, width: bulletWidth, height: bulletHeight });
+                playerBullets.push({ x: bulletX3, y: bulletY, width: bulletWidth, height: bulletHeight });
+            }
+        }
+
+        function spawnEnemy() {
+            const enemyWidth = 50;
+            const enemyHeight = 50;
+            const enemyX = Math.random() * (canvas.width - enemyWidth);
+            const enemyY = -enemyHeight; // Start above screen
+            const enemySpeed = Math.random() * 2 + 1; // Random speed
+
+            enemies.push({ 
+                x: enemyX, 
+                y: enemyY, 
+                width: enemyWidth, 
+                height: enemyHeight, 
+                speed: enemySpeed,
+                shootTimer: Math.random() * 100 + 50 // Staggered shooting
+            });
+        }
+        
+        function enemyShoot(enemy) {
+            const bulletWidth = 8;
+            const bulletHeight = 8;
+            const bulletX = enemy.x + enemy.width / 2 - bulletWidth / 2;
+            const bulletY = enemy.y + enemy.height;
+            const bulletSpeed = 4;
+            
+            enemyBullets.push({x: bulletX, y: bulletY, width: bulletWidth, height: bulletHeight, speed: bulletSpeed});
+        }
+
+        function spawnBoss() {
+            bossActive = true;
+            bossHealth = 50;
+            bossX = canvas.width / 2 - bossWidth / 2;
+            bossY = -bossHeight; // Start above screen
+            bossMovingIn = true; // Set flag to move into position
+            nextBossScore += 200; 
+            // Stop regular enemies
+            enemies = []; 
+        }
+
+        function bossShoot() {
+            // 4-Lane Fire
+            const bulletSpeed = 5;
+            const bulletWidth = 10;
+            const bulletHeight = 10;
+            
+            // Lane 1
+            enemyBullets.push({x: bossX + (bossWidth * 0.2) - bulletWidth/2, y: bossY + bossHeight, width: bulletWidth, height: bulletHeight, speed: bulletSpeed});
+            // Lane 2
+            enemyBullets.push({x: bossX + (bossWidth * 0.4) - bulletWidth/2, y: bossY + bossHeight, width: bulletWidth, height: bulletHeight, speed: bulletSpeed});
+            // Lane 3
+            enemyBullets.push({x: bossX + (bossWidth * 0.6) - bulletWidth/2, y: bossY + bossHeight, width: bulletWidth, height: bulletHeight, speed: bulletSpeed});
+            // Lane 4
+            enemyBullets.push({x: bossX + (bossWidth * 0.8) - bulletWidth/2, y: bossY + bossHeight, width: bulletWidth, height: bulletHeight, speed: bulletSpeed});
+        }
+        
+        function spawnPowerUp(x, y) {
+            if (Math.random() < 0.1) { // 10% chance to spawn
+                let type;
+                const rand = Math.random();
+                if (rand < 0.33) {
+                    type = 'life';
+                } else if (rand < 0.66) {
+                    type = 'shield';
+                } else {
+                    type = 'double';
+                }
+                
+                powerUps.push({
+                    x: x, 
+                    y: y, 
+                    width: 30, 
+                    height: 30, 
+                    type: type, 
+                    speed: 2
+                });
+            }
+        }
+
+        function checkCollision(rect1, rect2) {
+            return (
+                rect1.x < rect2.x + rect2.width &&
+                rect1.x + rect1.width > rect2.x &&
+                rect1.y < rect2.y + rect2.height &&
+                rect1.y + rect1.height > rect2.y
+            );
+        }
+
+        // --- Game Logic (Called from update loop) ---
+        function enemyKilled(enemyIndex) {
+            spawnPowerUp(enemies[enemyIndex].x, enemies[enemyIndex].y); // Chance to spawn power-up
+            enemies.splice(enemyIndex, 1); // Remove enemy
+            score += 10;
+        }
+
+        function playerHit() {
+            if (shieldActive) return; // Player is invincible
+            
+            playerHealth--;
+            if (playerHealth <= 0) {
+                gameOver = true;
+            }
+        }
+
+        function addLife() {
+            if (playerHealth < maxPlayerHealth) {
+                playerHealth++;
+            }
+        }
+        
+        function activateShield() {
+            shieldActive = true;
+            shieldTimer = 300; // 5 seconds (60fps * 5)
+        }
+        
+        function activateDoubleFire() {
+            doubleFireActive = true;
+            doubleFireTimer = 300; // 5 seconds
+        }
+
+        function bossHit() {
+            bossHealth--;
+            score += 5; // Small bonus for each hit
+            if (bossHealth <= 0) {
+                bossActive = false;
+                score += 500; // Big bonus for kill
+                // Spawn a bunch of powerups
+                spawnPowerUp(bossX + bossWidth * 0.2, bossY + bossHeight / 2);
+                spawnPowerUp(bossX + bossWidth * 0.4, bossY + bossHeight / 2);
+                spawnPowerUp(bossX + bossWidth * 0.6, bossY + bossHeight / 2);
+            }
+        }
+        
+        function restartGame() {
+            playerHealth = 3;
+            score = 0;
+            nextBossScore = 200;
+            enemies = [];
+            playerBullets = [];
+            enemyBullets = [];
+            powerUps = [];
+            bossActive = false;
+            gameOver = false;
+            playerX = canvas.width / 2 - playerWidth / 2;
+            playerY = canvas.height - 70;
+        }
 
         // --- Main Game Loop ---
         function gameLoop() {
-            update();
+            if (!gameOver) {
+                update();
+            }
             draw();
             requestAnimationFrame(gameLoop);
         }
 
+        // --- Update Function (Moves everything) ---
         function update() {
-            // Keep player within canvas bounds (touch controls can go out)
+            // Keep player within bounds
             if (playerX < 0) playerX = 0;
             if (playerX > canvas.width - playerWidth) playerX = canvas.width - playerWidth;
             if (playerY < 0) playerY = 0;
             if (playerY > canvas.height - playerHeight) playerY = canvas.height - playerHeight;
 
-            // --- Boss Spawn Logic ---
+            // Scroll background
+            bgY += bgSpeed;
+            if (bgY >= canvas.height) {
+                bgY = 0;
+            }
+            
+            // --- Update Power-up Timers ---
+            if (shieldActive) {
+                shieldTimer--;
+                if (shieldTimer <= 0) shieldActive = false;
+            }
+            if (doubleFireActive) {
+                doubleFireTimer--;
+                if (doubleFireTimer <= 0) doubleFireActive = false;
+            }
+
+            // --- Player Shooting ---
+            playerShootTimer++;
+            if (playerShootTimer >= playerShootCooldown) {
+                playerShoot();
+                playerShootTimer = 0;
+            }
+
+            // --- Move Player Bullets ---
+            for (let i = playerBullets.length - 1; i >= 0; i--) {
+                playerBullets[i].y -= 7; // Bullet speed
+                if (playerBullets[i].y < 0) {
+                    playerBullets.splice(i, 1); // Remove if off-screen
+                }
+            }
+            
+            // --- Move Enemy Bullets ---
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                enemyBullets[i].y += enemyBullets[i].speed;
+                if (enemyBullets[i].y > canvas.height) {
+                    enemyBullets.splice(i, 1); // Remove if off-screen
+                }
+            }
+
+            // --- Spawn & Move Enemies ---
+            if (!bossActive) {
+                enemySpawnTimer++;
+                if (enemySpawnTimer >= enemySpawnRate) {
+                    spawnEnemy();
+                    enemySpawnTimer = 0;
+                }
+                
+                for (let i = enemies.length - 1; i >= 0; i--) {
+                    let enemy = enemies[i];
+                    enemy.y += enemy.speed;
+                    
+                    // Enemy shooting
+                    enemy.shootTimer--;
+                    if(enemy.shootTimer <= 0) {
+                        enemyShoot(enemy);
+                        enemy.shootTimer = 150 + Math.random() * 100; // Reset timer
+                    }
+                    
+                    if (enemy.y > canvas.height) {
+                        enemies.splice(i, 1); // Remove if off-screen
+                    }
+                }
+            }
+            
+            // --- Update Boss ---
+            if (bossActive) {
+                if (bossMovingIn) {
+                    bossY += 2; // Move into position
+                    if (bossY >= 50) {
+                        bossMovingIn = false;
+                    }
+                }
+                
+                // Boss shooting
+                bossShootTimer++;
+                if (bossShootTimer >= 80) { // Fires faster than regular enemies
+                    bossShoot();
+                    bossShootTimer = 0;
+                }
+            }
+            
+            // --- Move Power-ups ---
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                powerUps[i].y += powerUps[i].speed;
+                if (powerUps[i].y > canvas.height) {
+                    powerUps.splice(i, 1);
+                }
+            }
+
+            // --- Check for Boss Spawn ---
             if (!bossActive && score >= nextBossScore) {
                 spawnBoss();
             }
 
-            // --- Future update code goes here ---
-            // e.g., updateBullets();
-            // e.g., updateEnemies();
-            // e.g., if (bossActive) updateBoss();
-        }
-
-        function draw() {
-            // Clear the entire canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Draw the background
-            ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
-
-            // Draw the player
-            ctx.drawImage(playerImage, playerX, playerY, playerWidth, playerHeight);
-
-            // --- Future drawing code goes here ---
-            // e.g., drawBullets();
-            // e.g., drawEnemies();
-            // e.g., if (bossActive) drawBoss();
-
-            // Draw the UI (score and health) on top of everything
-            drawUI();
-        }
-
-        // --- Function to draw UI ---
-        function drawUI() {
-            // Draw Score
-            ctx.fillStyle = 'white';
-            ctx.font = '24px Arial';
-            ctx.textAlign = 'left';
-            ctx.fillText(`Score: ${score}`, 10, 30);
-
-            // Draw Hearts
-            const heartWidth = 30;
-            const heartHeight = 30;
-            const heartPadding = 5;
-            for (let i = 0; i < playerHealth; i++) {
-                // Draw hearts from the right side of the screen
-                const heartX = canvas.width - (i + 1) * (heartWidth + heartPadding);
-                const heartY = 10;
-                ctx.drawImage(heartImage, heartX, heartY, heartWidth, heartHeight);
-            }
-        }
-
-        // --- Game Logic Functions ---
-
-        /**
-         * Call this when an enemy is killed.
-         */
-        function enemyKilled() {
-            score += 10;
-            console.log(`Score is now: ${score}`);
-        }
-
-        /**
-         * Call this when the player is hit by an enemy or bullet.
-         */
-        function playerHit() {
-            playerHealth--;
-            console.log(`Player hit! Health is now: ${playerHealth}`);
-            if (playerHealth <= 0) {
-                // Game Over logic
-                console.log("GAME OVER");
-                // For now, just reset
-                playerHealth = 3;
-                score = 0;
-                nextBossScore = 200;
-            }
-        }
-
-        /**
-         * Call this when the player picks up the 'power_extra_life.png'
-         */
-        function addLife() {
-            if (playerHealth < maxPlayerHealth) {
-                playerHealth++;
-                console.log(`Gained a life! Health is now: ${playerHealth}`);
-            }
-        }
-
-        /**
-         * Call this to spawn the boss.
-         */
-        function spawnBoss() {
-            console.log("BOSS BATTLE START!");
-            bossActive = true;
-            bossHealth = 50; // Reset boss health
-            // Set the score needed for the *next* boss
-            nextBossScore += 200; 
-
-            // (Future logic: stop regular enemies, spawn the boss object)
-        }
-
-        /**
-         * Call this when the boss is hit by a player bullet.
-         */
-        function bossHit() {
-            bossHealth--;
-            if (bossHealth <= 0) {
-                console.log("BOSS DEFEATED!");
-                bossActive = false;
-                score += 100; // Bonus for boss
-                // (Future logic: restart regular enemies)
-            }
-        }
-
-
-        // --- Start the Game ---
-
-        // We need to wait for ALL images to load
-        let assetsLoaded = 0;
-        const totalAssets = 3; // bg, player, heart
-
-        function assetLoaded() {
-            assetsLoaded++;
-            if (assetsLoaded === totalAssets) {
-                // Set canvas to fill the screen
-                resizeCanvas();
-                // Start the game!
-                gameLoop(); 
-            }
-        }
-
-        // --- NEW: Resize Canvas Function ---
-        function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            // --- Collision Detection ---
+            const playerRect = {x: playerX, y: playerY, width: playerWidth, height: playerHeight};
             
-            // Re-center player if canvas is resized
-            playerY = canvas.height - 70;
-            playerX = canvas.width / 2 - playerWidth / 2;
+            // Player Bullets vs Enemies
+            for (let i = playerBullets.length - 1; i >= 0; i--) {
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    if (checkCollision(playerBullets[i], enemies[j])) {
+                        playerBullets.splice(i, 1);
+                        enemyKilled(j);
+                        break; // Stop checking this bullet
+                    }
+                }
+            }
+            
+            // Player Bullets vs Boss
+            if(bossActive) {
+                const bossRect = {x: bossX, y: bossY, width: bossWidth, height: bossHeight};
+                for (let i = playerBullets.length - 1; i >= 0; i--) {
+                     if (checkCollision(playerBullets[i], bossRect)) {
+                        playerBullets.splice(i, 1);
+                        bossHit();
+                        break;
+                     }
+                }
+            }
+            
+            // Enemy Bullets vs Player
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                if (checkCollision(enemyBullets[i], playerRect)) {
+                    enemyBullets.splice(i, 1);
+                    playerHit();
+                    break;
+                }
+            }
+            
+            // Enemies vs Player
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                if (checkCollision(enemies[i], playerRect)) {
+                    enemies.splice(i, 1);
+                    playerHit();
+                    break;
+                }
+            }
+            
+            // Power-ups vs Player
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                if (checkCollision(powerUps[i], playerRect)) {
+                    let power = powerUps[i];
+                    if (power.type === 'life') addLife();
+                    if (power.type === 'shield') activateShield();
+                    if (power.type === 'double') activateDoubleFire();
+                    powerUps.splice(i, 1);
+                    break;
+                }
+            }
         }
         
-        // Resize canvas when the window is resized
-        window.addEventListener('resize', resizeCanvas);
+        // --- Draw Function (Puts everything on screen) ---
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Load images and start game
-        bgImage.onload = assetLoaded;
-        playerImage.onload = assetLoaded;
-        heartImage.onload = assetLoaded;
+            // --- Draw Scrolling Background ---
+            // Draw it twice: one in its position, one above it
+            ctx.drawImage(bgImage, 0, bgY, canvas.width, canvas.height);
+            ctx.drawImage(bgImage, 0, bgY - canvas.height, canvas.width, canvas.height);
 
-        bgImage.onerror = () => console.error("Error loading background.png");
-        playerImage.onerror = () => console.error("Error loading player.png");
-        heartImage.onerror = () => console.error("Error loading heart.png");
+            // --- Draw Player ---
+            ctx.drawImage(playerImage, playerX, playerY, playerWidth, playerHeight);
+            
+            // Draw Shield
+            if(shieldActive) {
+                ctx.strokeStyle = 'cyan';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(playerX + playerWidth / 2, playerY + playerHeight / 2, playerWidth * 0.7, 0, Math.PI * 2);
+                ctx.stroke();
+            }
 
-    </script>
-</body>
-</html>
+            // --- Draw Bullets ---
+            for (const bullet of playerBullets) {
+                ctx.drawImage(bulletGreenImage, bullet.x, bullet.y, bullet.width, bullet.height);
+            }
+            for (const bullet of enemyBullets) {
+                ctx.drawImage(bulletRedImage, bullet.x, bullet.y, bullet.width, bullet.height);
+            }
+            
+            // --- Draw Enemies ---
+            for (const enemy of enemies) {
+                ctx.drawImage(enemyImage, enemy.x, enemy.y, enemy.width, enemy.height);
+            }
+            
+            // --- Draw Boss ---
+            if(bossActive) {
+                ctx.drawImage(bossImage, bossX, bossY, bossWidth, bossHeight);
+                // Draw boss health bar
+                ctx.fillStyle = 'red';
+                ctx.fillRect(bossX, bossY - 15, bossWidth, 10);
