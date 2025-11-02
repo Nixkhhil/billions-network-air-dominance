@@ -1,192 +1,271 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Aircraft Game</title>
-<style>
-  body {
-    margin: 0;
-    background: black;
-    overflow: hidden;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-  }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aircraft Game</title>
 
-  canvas {
-    background: url("assets/background.png") no-repeat center center / cover;
-    aspect-ratio: 3 / 4;
-    width: 75vmin;
-    height: auto;
-    border: 2px solid #333;
-    display: block;
-  }
+    <style>
+        /* Basic styling to center the game and give it a border */
+        body {
+            background-color: #333;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            /* Prevents scrolling on mobile */
+            overflow: hidden; 
+        }
 
-  #lives {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    display: flex;
-    gap: 5px;
-  }
+        h1 {
+            margin: 1rem;
+        }
 
-  #lives img {
-    width: 30px;
-    height: 30px;
-  }
-</style>
+        canvas {
+            background-color: #000; /* Fallback if background image fails */
+            border: 3px solid #fff;
+            border-radius: 5px;
+            /* Cursors are not needed on mobile, but good for testing on PC */
+            cursor: none; 
+        }
+    </style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
-<div id="lives"></div>
-<audio id="bgm" src="sounds/bgm.mpeg" loop autoplay></audio>
 
-<script>
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
-canvas.width = 450;  // 3:4 ratio
-canvas.height = 600;
+    <h1>Aircraft Shooter</h1>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
 
-const bg = new Image();  bg.src = "assets/background.png";
-const playerImg = new Image(); playerImg.src = "assets/player.png";
-const enemyImg = new Image();  enemyImg.src = "assets/enemy.png";
-const bossImg = new Image();   bossImg.src = "assets/boss.png";
-const bulletGreen = new Image(); bulletGreen.src = "assets/bullet_green.png";
-const bulletRed = new Image();   bulletRed.src = "assets/bullet_red.png";
-const heartImg = new Image(); heartImg.src = "assets/heart.png";
+    <script>
+        // Get the canvas and its 2D rendering context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
 
-const bgm = document.getElementById("bgm");
-bgm.volume = 0.5;
+        // --- Game Variables ---
+        let playerX = canvas.width / 2 - 25; // Start player in middle-bottom
+        let playerY = canvas.height - 70;
+        const playerWidth = 50;
+        const playerHeight = 50;
 
-const player = { x: canvas.width/2 - 25, y: canvas.height - 90, w: 50, h: 50, speed: 5 };
-let bullets = [];
-let enemies = [];
-let enemyBullets = [];
-let bossBullets = [];
-let boss = null;
-let lastEnemySpawn = 0;
-let lastBossFire = 0;
-let bossSpawned = false;
-let lastShot = 0;
-let lives = 3;
-const livesDiv = document.getElementById("lives");
+        // --- Game State Variables ---
+        let playerHealth = 3;
+        const maxPlayerHealth = 3;
+        let score = 0;
+        let nextBossScore = 200; // The score to reach for the first boss
+        let bossActive = false;
+        let bossHealth = 50;
 
-function updateLives() {
-  livesDiv.innerHTML = "";
-  for (let i = 0; i < lives; i++) {
-    const heart = document.createElement("img");
-    heart.src = "assets/heart.png";
-    livesDiv.appendChild(heart);
-  }
-}
-updateLives();
+        // --- Load Assets ---
 
-document.addEventListener("mousemove", (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  player.x = (e.clientX - rect.left) * scaleX - player.w / 2;
-  player.y = (e.clientY - rect.top) * scaleY - player.h / 2;
-});
+        // Load background image
+        const bgImage = new Image();
+        bgImage.src = 'assets/background.png';
 
-function shoot() {
-  const now = Date.now();
-  if (now - lastShot > 300) {
-    bullets.push({ x: player.x + player.w/2 - 5, y: player.y, w: 10, h: 20, speed: 7 });
-    lastShot = now;
-  }
-}
+        // Load player image
+        const playerImage = new Image();
+        playerImage.src = 'assets/player.png';
 
-function spawnEnemies(timestamp) {
-  if (timestamp - lastEnemySpawn > 2600) {
-    enemies.push({ x: Math.random() * (canvas.width - 40), y: -40, w: 40, h: 40, speed: 2 });
-    lastEnemySpawn = timestamp;
-  }
-}
+        // Load heart image
+        const heartImage = new Image();
+        heartImage.src = 'assets/heart.png';
 
-function bossFire(timestamp) {
-  if (boss && timestamp - lastBossFire > 1500) {
-    bossBullets.push({ x: boss.x + boss.w/2 - 5, y: boss.y + boss.h, w: 10, h: 20, speed: 5 });
-    lastBossFire = timestamp;
-  }
-}
+        // --- Mobile Touch Controls ---
 
-function drawAll() {
-  ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
-  ctx.drawImage(playerImg, player.x, player.y, player.w, player.h);
-  bullets.forEach(b => { b.y -= b.speed; ctx.drawImage(bulletGreen, b.x, b.y, b.w, b.h); });
-  enemies.forEach(e => { e.y += e.speed; ctx.drawImage(enemyImg, e.x, e.y, e.w, e.h); });
-  bossBullets.forEach(b => { b.y += b.speed; ctx.drawImage(bulletRed, b.x, b.y, b.w, b.h); });
-  if (boss) ctx.drawImage(bossImg, boss.x, boss.y, boss.w, boss.h);
-}
+        // Helper function to get touch position relative to the canvas
+        function getTouchPos(canvasDom, touchEvent) {
+            const rect = canvasDom.getBoundingClientRect();
+            return {
+                x: touchEvent.touches[0].clientX - rect.left,
+                y: touchEvent.touches[0].clientY - rect.top
+            };
+        }
 
-function isCollide(a,b){
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
+        // Listen for touch start
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // Prevent screen from scrolling
+            const touchPos = getTouchPos(canvas, e);
+            // Center the player on the touch
+            playerX = touchPos.x - playerWidth / 2;
+            playerY = touchPos.y - playerHeight / 2;
+        }, false);
 
-function handleCollisions() {
-  // bullets vs enemies
-  enemies = enemies.filter(e => {
-    let hit = false;
-    bullets = bullets.filter(b => {
-      if (isCollide(b,e)) hit = true;
-      return !isCollide(b,e);
-    });
-    return !hit;
-  });
+        // Listen for touch movement
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault(); // Prevent screen from scrolling
+            const touchPos = getTouchPos(canvas, e);
+            // Center the player on the touch
+            playerX = touchPos.x - playerWidth / 2;
+            playerY = touchPos.y - playerHeight / 2;
+        }, false);
 
-  // player vs enemy bullets
-  bossBullets = bossBullets.filter(b => {
-    if (isCollide(b, player)) {
-      lives--;
-      updateLives();
-      return false;
-    }
-    return true;
-  });
 
-  if (lives <= 0) {
-    alert("Game Over!");
-    document.location.reload();
-  }
+        // --- Main Game Loop ---
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
 
-  // bullets vs boss
-  if (boss) {
-    bullets = bullets.filter(b => {
-      if (isCollide(b,boss)) {
-        boss.hp -= 1;
-        return false;
-      }
-      return true;
-    });
-    if (boss.hp <= 0) boss = null;
-  }
-}
+        function update() {
+            // Keep player within canvas bounds (touch controls can go out)
+            if (playerX < 0) playerX = 0;
+            if (playerX > canvas.width - playerWidth) playerX = canvas.width - playerWidth;
+            if (playerY < 0) playerY = 0;
+            if (playerY > canvas.height - playerHeight) playerY = canvas.height - playerHeight;
 
-function update(timestamp) {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  shoot();
-  spawnEnemies(timestamp);
-  handleCollisions();
-  drawAll();
+            // --- Boss Spawn Logic ---
+            if (!bossActive && score >= nextBossScore) {
+                spawnBoss();
+            }
 
-  if (!bossSpawned && timestamp > 30000) {
-    boss = { x: canvas.width/2 - 60, y: 30, w: 120, h: 120, speed: 1, dir: 1, hp: 25 };
-    bossSpawned = true;
-  }
+            // --- Future update code goes here ---
+            // e.g., updateBullets();
+            // e.g., updateEnemies();
+            // e.g., if (bossActive) updateBoss();
+        }
 
-  if (boss) {
-    boss.x += boss.speed * boss.dir;
-    if (boss.x <= 0 || boss.x + boss.w >= canvas.width) boss.dir *= -1;
-    bossFire(timestamp);
-  }
+        function draw() {
+            // Clear the entire canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  requestAnimationFrame(update);
-}
+            // Draw the background
+            ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
 
-requestAnimationFrame(update);
-</script>
+            // Draw the player
+            ctx.drawImage(playerImage, playerX, playerY, playerWidth, playerHeight);
+
+            // --- Future drawing code goes here ---
+            // e.g., drawBullets();
+            // e.g., drawEnemies();
+            // e.g., if (bossActive) drawBoss();
+
+            // Draw the UI (score and health) on top of everything
+            drawUI();
+        }
+
+        // --- Function to draw UI ---
+        function drawUI() {
+            // Draw Score
+            ctx.fillStyle = 'white';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Score: ${score}`, 10, 30);
+
+            // Draw Hearts
+            const heartWidth = 30;
+            const heartHeight = 30;
+            const heartPadding = 5;
+            for (let i = 0; i < playerHealth; i++) {
+                // Draw hearts from the right side of the screen
+                const heartX = canvas.width - (i + 1) * (heartWidth + heartPadding);
+                const heartY = 10;
+                ctx.drawImage(heartImage, heartX, heartY, heartWidth, heartHeight);
+            }
+        }
+
+        // --- Game Logic Functions ---
+
+        /**
+         * Call this when an enemy is killed.
+         */
+        function enemyKilled() {
+            score += 10;
+            console.log(`Score is now: ${score}`);
+        }
+
+        /**
+         * Call this when the player is hit by an enemy or bullet.
+         */
+        function playerHit() {
+            playerHealth--;
+            console.log(`Player hit! Health is now: ${playerHealth}`);
+            if (playerHealth <= 0) {
+                // Game Over logic
+                console.log("GAME OVER");
+                // For now, just reset
+                playerHealth = 3;
+                score = 0;
+                nextBossScore = 200;
+            }
+        }
+
+        /**
+         * Call this when the player picks up the 'power_extra_life.png'
+         */
+        function addLife() {
+            if (playerHealth < maxPlayerHealth) {
+                playerHealth++;
+                console.log(`Gained a life! Health is now: ${playerHealth}`);
+            }
+        }
+
+        /**
+         * Call this to spawn the boss.
+         */
+        function spawnBoss() {
+            console.log("BOSS BATTLE START!");
+            bossActive = true;
+            bossHealth = 50; // Reset boss health
+            // Set the score needed for the *next* boss
+            nextBossScore += 200; 
+
+            // (Future logic: stop regular enemies, spawn the boss object)
+        }
+
+        /**
+         * Call this when the boss is hit by a player bullet.
+         */
+        function bossHit() {
+            bossHealth--;
+            if (bossHealth <= 0) {
+                console.log("BOSS DEFEATED!");
+                bossActive = false;
+                score += 100; // Bonus for boss
+                // (Future logic: restart regular enemies)
+            }
+        }
+
+
+        // --- Start the Game ---
+
+        // We need to wait for ALL images to load
+        let assetsLoaded = 0;
+        const totalAssets = 3; // bg, player, heart
+
+        function assetLoaded() {
+            assetsLoaded++;
+            if (assetsLoaded === totalAssets) {
+                // Set canvas to fill the screen
+                resizeCanvas();
+                // Start the game!
+                gameLoop(); 
+            }
+        }
+
+        // --- NEW: Resize Canvas Function ---
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // Re-center player if canvas is resized
+            playerY = canvas.height - 70;
+            playerX = canvas.width / 2 - playerWidth / 2;
+        }
+        
+        // Resize canvas when the window is resized
+        window.addEventListener('resize', resizeCanvas);
+
+        // Load images and start game
+        bgImage.onload = assetLoaded;
+        playerImage.onload = assetLoaded;
+        heartImage.onload = assetLoaded;
+
+        bgImage.onerror = () => console.error("Error loading background.png");
+        playerImage.onerror = () => console.error("Error loading player.png");
+        heartImage.onerror = () => console.error("Error loading heart.png");
+
+    </script>
 </body>
 </html>
