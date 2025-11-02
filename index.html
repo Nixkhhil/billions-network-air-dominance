@@ -1,487 +1,206 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
-<title>Aircraft — Final</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aircraft Game</title>
 <style>
-  :root{--topbar:0}
-  *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%;background:#000;color:#fff;font-family:Inter,Arial,Helvetica,sans-serif}
-  #wrap{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
-  #game{width:100%;max-width:900px;height:100vh;position:relative;overflow:hidden;background:#000}
-  canvas{display:block; width:100%; height:100%}
-  #hud{position:absolute;left:12px;top:12px;z-index:60}
-  #hud .score{font-weight:700;margin-bottom:6px}
-  #hud .lives img{width:36px;height:36px;margin-right:6px;vertical-align:middle}
-  #powerRow{position:absolute;right:12px;top:12px;z-index:60;display:flex;gap:8px}
-  #popup{position:absolute;left:50%;top:16%;transform:translateX(-50%);background:rgba(0,0,0,0.6);padding:8px 12px;border-radius:8px;z-index:70;opacity:0;transition:opacity .22s}
-  #loading{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:80}
-  @media(max-width:420px){ #hud .lives img{width:28px;height:28px} }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: black;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+    background: url("assets/background.png") repeat-y center/cover;
+  }
+  #popup {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%,-50%);
+    background: rgba(0,0,0,0.7);
+    color: #00ff88;
+    font-family: sans-serif;
+    padding: 10px 20px;
+    border-radius: 10px;
+    display: none;
+  }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <div id="game">
-    <canvas id="canvas"></canvas>
-
-    <div id="hud">
-      <div class="score">Score: <span id="score">0</span></div>
-      <div class="lives" id="lives"></div>
-    </div>
-
-    <div id="powerRow"></div>
-    <div id="popup"></div>
-    <div id="loading">Loading assets... 0%</div>
-  </div>
-</div>
-
+<canvas id="game"></canvas>
+<div id="popup"></div>
 <audio id="bgm" src="sounds/bgm.mpeg" loop></audio>
 
 <script>
-/* Final single-file aircraft shooter
-   - Make sure folder /assets and /sounds exist with correct filenames.
-   - Enemy spawn: 1500 ms
-   - Enemy fire: 2000 ms
-   - Player fire: 200 ms
-   - Power spawn checker: tries every 2000 ms but only 1 on screen
-   - Double-fire power is permanent
-   - Boss: first at 200 score, then every +200 -> spawns pair
-*/
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = innerWidth;
+canvas.height = innerHeight;
 
-const ASSETS = {
-  bg: 'assets/background.png',
-  player: 'assets/player.png',
-  enemy: 'assets/enemy.png',
-  boss: 'assets/boss.png',
-  bulletP: 'assets/bullet_green.png',
-  bulletE: 'assets/bullet_red.png',
-  powerDouble: 'assets/power_double_fire.png',
-  powerShield: 'assets/power_shield.png',
-  powerLife: 'assets/power_extra_life.png',
-  heart: 'assets/heart.png'
+// Load assets
+const load = (src) => { const i = new Image(); i.src = src; return i; };
+const background = load("assets/background.png");
+const playerImg = load("assets/player.png");
+const enemyImg = load("assets/enemy.png");
+const bossImg = load("assets/boss.png");
+const bulletGreen = load("assets/bullet_green.png");
+const bulletRed = load("assets/bullet_red.png");
+const powerDouble = load("assets/power_double_fire.png");
+const powerShield = load("assets/power_shield.png");
+const powerLife = load("assets/power_extra_life.png");
+
+let bgY = 0, score = 0, lives = 3;
+let doubleFire = false, shield = false;
+let enemies = [], bullets = [], enemyBullets = [], power = null, boss = null;
+
+const player = {
+  x: canvas.width / 2 - 40,
+  y: canvas.height - 150,
+  width: 80,
+  height: 80,
+  speed: 8
 };
 
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-let DPR = Math.max(1, window.devicePixelRatio || 1);
-function fit() {
-  const rect = document.getElementById('game').getBoundingClientRect();
-  canvas.style.width = rect.width + 'px';
-  canvas.style.height = rect.height + 'px';
-  canvas.width = Math.round(rect.width * DPR);
-  canvas.height = Math.round(rect.height * DPR);
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-}
-window.addEventListener('resize', fit, {passive:true});
+const bgm = document.getElementById("bgm");
+bgm.play().catch(()=>document.body.addEventListener("click",()=>bgm.play(),{once:true}));
 
-// load images
-const imgs = {};
-let toLoad = Object.keys(ASSETS).length;
-const loadingEl = document.getElementById('loading');
-for (const [k,p] of Object.entries(ASSETS)) {
-  const i = new Image();
-  i.src = p;
-  i.onload = ()=> { imgs[k]=i; toLoad--; loadingEl.textContent = `Loading assets... ${Math.round((Object.keys(ASSETS).length - toLoad)/Object.keys(ASSETS).length*100)}%`; if(toLoad===0) start(); };
-  i.onerror = ()=> { console.error('Asset load failed:',p); loadingEl.textContent = `Failed to load ${p}`; };
-}
-
-// audio
-const bgm = document.getElementById('bgm'); bgm.volume = 0.36;
-function ensurePlayBgm(){ bgm.play().catch(()=> { document.addEventListener('touchstart', ()=> bgm.play(), {once:true}); document.addEventListener('click', ()=> bgm.play(), {once:true}); }); }
-
-// state
-let W, H;
-let score = 0;
-let lastBossSpawnScore = null;
-
-const HUD_SCORE = document.getElementById('score');
-const LIVES_EL = document.getElementById('lives');
-const POWER_ROW = document.getElementById('powerRow');
-const POPUP = document.getElementById('popup');
-
-const state = {
-  bgY: 0,
-  player: { x:0, y:0, w:72, h:72, lives:3, hitCount:0, doubleFire: false, shieldUntil:0 },
-  bulletsP: [],
-  bulletsE: [],
-  enemies: [],
-  bosses: [],
-  powers: []
-};
-
-// constants
-const PLAYER_FIRE_MS = 200;
-const ENEMY_SPAWN_MS = 1500; // 1.5s as requested
-const ENEMY_FIRE_MS = 2000;  // 2s
-const POWER_CHECK_MS = 2000; // spawn check, but only 1 allowed
-const ENEMY_HP = 3;
-const BOSS_HP = 40;
-
-// timing
-let lastPlayerShot = 0;
-let lastPowerCheck = 0;
-
-// responsive player placement
-function positionPlayer(){
-  const rect = document.getElementById('game').getBoundingClientRect();
-  W = rect.width; H = rect.height;
-  state.player.w = Math.round(Math.min(W * 0.14, imgs.player.width || 72));
-  state.player.h = Math.round(state.player.w * ((imgs.player.height && imgs.player.width) ? imgs.player.height / imgs.player.width : 1));
-  state.player.x = (W - state.player.w)/2;
-  state.player.y = H - state.player.h - Math.round(H*0.06);
-}
-
-// utilities
-const now = ()=>Date.now();
-const rand = (a,b) => Math.random()*(b-a)+a;
-const clamp = (v,a,b) => Math.max(a, Math.min(b,v));
-const overlap = (A,B) => A.x < B.x+B.w && A.x+A.w > B.x && A.y < B.y+B.h && A.y+A.h > B.y;
-
-// spawn functions
-function spawnEnemy(){
-  const w = Math.round(Math.min(W*0.11, imgs.enemy.width || 48));
-  const h = Math.round(w * ((imgs.enemy.height && imgs.enemy.width) ? imgs.enemy.height / imgs.enemy.width : 1));
-  state.enemies.push({ x: rand(8, W - w - 8), y: -h - 8, w, h, speed: rand(1.2,2.2), hp: ENEMY_HP, lastShot: now() + rand(200,700), fade:false, alpha:1 });
-}
-
-function spawnPowerAtRandom(){
-  if(state.powers.length>0) return; // only one power on screen
-  const w = Math.round(Math.min(W*0.10, imgs.powerDouble.width || 48));
-  const h = Math.round(w * ((imgs.powerDouble.height && imgs.powerDouble.width) ? imgs.powerDouble.height / imgs.powerDouble.width : 1));
-  const px = rand(24, W - 24 - w);
-  const py = rand(24, H*0.45);
-  const types = ['double','shield','life'];
-  const t = types[Math.floor(Math.random()*types.length)];
-  state.powers.push({ x: px, y: py, w, h, type: t, vy: 0.7 });
-}
-
-function spawnBossPair(){
-  const w = Math.round(Math.min(W*0.30, imgs.boss.width || 200));
-  const h = Math.round(w * ((imgs.boss.height && imgs.boss.width) ? imgs.boss.height / imgs.boss.width : 1));
-  state.bosses.push({ x: 24, y: -h-10, w, h, vx:1.4, hp: BOSS_HP, fade:false, alpha:1, fireTimer:0 });
-  state.bosses.push({ x: W - 24 - w, y: -h-10, w, h, vx:-1.4, hp: BOSS_HP, fade:false, alpha:1, fireTimer:0 });
-}
-
-// firing
-function playerShoot(){
-  const bw = Math.round(state.player.w * 0.18), bh = Math.round(state.player.h*0.28);
-  if(state.player.doubleFire){
-    state.bulletsP.push({ x: state.player.x + 8, y: state.player.y - bh - 6, w: bw, h: bh, spd: 36 });
-    state.bulletsP.push({ x: state.player.x + state.player.w - 8 - bw, y: state.player.y - bh - 6, w: bw, h: bh, spd: 36 });
+// 🔥 Player bullet (every 0.2 sec)
+setInterval(()=>{
+  if(doubleFire){
+    bullets.push({x:player.x+10,y:player.y,width:15,height:30});
+    bullets.push({x:player.x+player.width-25,y:player.y,width:15,height:30});
   } else {
-    state.bulletsP.push({ x: state.player.x + state.player.w/2 - bw/2, y: state.player.y - bh - 6, w: bw, h: bh, spd: 36 });
+    bullets.push({x:player.x+player.width/2-8,y:player.y,width:15,height:30});
+  }
+},200);
+
+// 🧨 Enemy spawn every 2.6 sec
+setInterval(()=>{
+  enemies.push({x:Math.random()*(canvas.width-60),y:-60,width:60,height:60,hp:1});
+},2600);
+
+// 💣 Enemy fire every 2 sec
+setInterval(()=>{
+  enemies.forEach(e=>{
+    enemyBullets.push({x:e.x+e.width/2-5,y:e.y+e.height,width:10,height:20});
+  });
+},2000);
+
+// ⚡ Power spawn every 2 sec
+setInterval(()=>{
+  if(!power){
+    const types=["double","shield","life"];
+    const t=types[Math.floor(Math.random()*types.length)];
+    power={type:t,x:Math.random()*(canvas.width-50),y:-50,width:50,height:50};
+  }
+},2000);
+
+// 👹 Boss spawn every 200 points
+function spawnBoss(){
+  if(score>=200 && score%200===0){
+    boss={x:canvas.width/2-100,y:60,width:200,height:200,hp:10};
   }
 }
 
-function enemyFire(e){
-  const bw = Math.round(e.w * 0.12), bh = Math.round(e.h * 0.28);
-  state.bulletsE.push({ x: e.x + e.w/2 - bw/2, y: e.y + e.h + 6, w: bw, h: bh, spd: 6, color: 'red' });
-}
-
-function bossFire3(b){
-  const bw = Math.round(b.w * 0.12), bh = Math.round(b.h * 0.28);
-  const lanes = [ b.x + 8, b.x + b.w/2 - bw/2, b.x + b.w - bw - 8 ];
-  for(let i=0;i<3;i++){
-    const lx = clamp(lanes[i], 6, W - bw - 6);
-    state.bulletsE.push({ x: lx, y: b.y + b.h + 6, w: bw, h: bh, spd: 6, color: 'green' });
-  }
-}
-
-// HUD update
-function updateHUD(){
-  HUD_SCORE.textContent = score;
-  LIVES_EL.innerHTML = '';
-  for(let i=0;i<state.player.lives;i++){
-    const im = document.createElement('img'); im.src = ASSETS.heart; im.alt='h';
-    im.style.width='36px'; im.style.height='36px'; im.style.marginRight='6px';
-    LIVES_EL.appendChild(im);
-  }
-  POWER_ROW.innerHTML = '';
-  if(state.player.doubleFire){
-    const el = document.createElement('img'); el.src = ASSETS.powerDouble; el.title='2X FIRE (permanent)'; el.style.width='44px'; el.style.height='44px';
-    POWER_ROW.appendChild(el);
-  }
-  if(state.player.shieldUntil > now()){
-    const el = document.createElement('img'); el.src = ASSETS.powerShield; el.title='Shield'; el.style.width='44px'; el.style.height='44px';
-    POWER_ROW.appendChild(el);
-  }
-}
-
-// popup
-let popupTimer = null;
-function showPopup(text){
-  POPUP.textContent = text;
-  POPUP.style.opacity = '1';
-  if(popupTimer) clearTimeout(popupTimer);
-  popupTimer = setTimeout(()=> POPUP.style.opacity='0', 1200);
-}
-
-// input: touch drag left-right only
-let touchStartX = null, dragging=false, lastTouchX=null;
-const DRAG_AREA_RATIO = 1.0; // full canvas drag horizontally fine (we only change x)
-canvas.addEventListener('touchstart', e=>{
-  const t = e.touches[0];
-  touchStartX = t.clientX;
-  lastTouchX = t.clientX;
-  dragging = true;
-  ensurePlayBgm();
-}, {passive:true});
-canvas.addEventListener('touchmove', e=>{
-  if(!dragging) return;
-  e.preventDefault();
-  const t = e.touches[0];
-  const dx = t.clientX - lastTouchX;
-  state.player.x += dx * 1.2; // amplify
-  state.player.x = clamp(state.player.x, 6, W - state.player.w - 6);
-  lastTouchX = t.clientX;
-}, {passive:false});
-canvas.addEventListener('touchend', e=>{
-  dragging = false; touchStartX = null; lastTouchX = null;
-}, {passive:true});
-// also support mouse drag for testing on desktop
-let mouseDown=false;
-canvas.addEventListener('mousedown', e=>{
-  mouseDown=true; lastTouchX = e.clientX;
+// 🖐 Swipe + drag control
+let startX=null, dragging=false;
+canvas.addEventListener("touchstart",e=>{startX=e.touches[0].clientX;});
+canvas.addEventListener("touchmove",e=>{
+  const x=e.touches[0].clientX;
+  const dx=x-startX;
+  player.x+=dx;
+  if(player.x<0)player.x=0;
+  if(player.x>canvas.width-player.width)player.x=canvas.width-player.width;
+  startX=x;
 });
-canvas.addEventListener('mousemove', e=>{
-  if(!mouseDown) return;
-  const dx = e.clientX - lastTouchX;
-  state.player.x += dx * 1.0;
-  state.player.x = clamp(state.player.x, 6, W - state.player.w - 6);
-  lastTouchX = e.clientX;
+canvas.addEventListener("mousedown",e=>{dragging=true;startX=e.clientX;});
+canvas.addEventListener("mousemove",e=>{
+  if(dragging){
+    const dx=e.clientX-startX;
+    player.x+=dx;
+    if(player.x<0)player.x=0;
+    if(player.x>canvas.width-player.width)player.x=canvas.width-player.width;
+    startX=e.clientX;
+  }
 });
-canvas.addEventListener('mouseup', ()=> mouseDown=false);
+canvas.addEventListener("mouseup",()=>dragging=false);
+canvas.addEventListener("mouseleave",()=>dragging=false);
 
-// auto spawn loops (use intervals for spawn/fire/power checks)
-let spawnInterval, enemyFireInterval, powerInterval;
-function startIntervals(){
-  spawnInterval = setInterval(()=> spawnEnemy(), ENEMY_SPAWN_MS);
-  enemyFireInterval = setInterval(()=>{
-    // enemies fire
-    state.enemies.forEach(e => enemyFire(e));
-    // bosses fire in bursts (3-lane)
-    state.bosses.forEach(b => bossFire3(b));
-  }, ENEMY_FIRE_MS);
-  powerInterval = setInterval(()=> spawnPowerAtRandom(), POWER_CHECK_MS);
-}
-
-// game update loop
-let lastFrame = performance.now();
-function update(ts){
-  const dt = Math.max(1, ts - lastFrame);
-  lastFrame = ts;
-
-  // background scroll
-  state.bgY += 1.6 * (dt/16);
-  if(state.bgY >= H) state.bgY = 0;
-
-  // player auto shoot
-  if(now() - lastPlayerShot > PLAYER_FIRE_MS){ lastPlayerShot = now(); playerShoot(); }
-
-  // update bulletsP
-  for(let i=state.bulletsP.length-1;i>=0;i--){
-    const b = state.bulletsP[i];
-    b.y -= b.spd * (dt/16);
-    if(b.y < -120) state.bulletsP.splice(i,1);
-  }
-
-  // update bulletsE
-  for(let i=state.bulletsE.length-1;i>=0;i--){
-    const b = state.bulletsE[i];
-    b.y += b.spd * (dt/16);
-    if(b.y > H + 200) state.bulletsE.splice(i,1);
-  }
-
-  // update enemies
-  for(let i=state.enemies.length-1;i>=0;i--){
-    const e = state.enemies[i];
-    e.y += e.speed * (dt/16);
-    if(e.y > H + 100) state.enemies.splice(i,1);
-  }
-
-  // update bosses
-  for(let i=state.bosses.length-1;i>=0;i--){
-    const b = state.bosses[i];
-    b.x += b.vx * (dt/16);
-    if(b.x < 6 || b.x + b.w > W - 6) b.vx *= -1;
-  }
-
-  // update powers
-  for(let i=state.powers.length-1;i>=0;i--){
-    const p = state.powers[i];
-    p.y += p.vy * (dt/16);
-    if(p.y > H + 80) state.powers.splice(i,1);
-  }
-
-  // collisions: player bullets -> enemies
-  for(let i=state.bulletsP.length-1;i>=0;i--){
-    const pb = state.bulletsP[i];
-    let hit=false;
-    // enemies
-    for(let j=state.enemies.length-1;j>=0;j--){
-      const e = state.enemies[j];
-      if(overlap({x:pb.x,y:pb.y,w:pb.w,h:pb.h},{x:e.x,y:e.y,w:e.w,h:e.h})){
-        state.bulletsP.splice(i,1);
-        e.hp = (e.hp||ENEMY_HP) - 1;
-        if(e.hp <= 0){ e.fade=true; e.alpha=1; score += 10; updateHUD(); if(Math.random() < 0.22) spawnPowerAtRandom(); }
-        hit=true; break;
-      }
-    }
-    if(hit) continue;
-    // bosses
-    for(let bi=state.bosses.length-1;bi>=0;bi--){
-      const bo = state.bosses[bi];
-      if(overlap({x:pb.x,y:pb.y,w:pb.w,h:pb.h},{x:bo.x,y:bo.y,w:bo.w,h:bo.h})){
-        state.bulletsP.splice(i,1);
-        bo.hp -= 1;
-        if(bo.hp <= 0){ bo.fade=true; bo.alpha=1; }
-        score += 1; updateHUD();
-        break;
-      }
-    }
-  }
-
-  // fade removal enemies & bosses
-  for(let i=state.enemies.length-1;i>=0;i--){
-    if(state.enemies[i].fade){ state.enemies[i].alpha -= 0.06*(dt/16); if(state.enemies[i].alpha <=0) state.enemies.splice(i,1); }
-  }
-  for(let i=state.bosses.length-1;i>=0;i--){
-    if(state.bosses[i].fade){ state.bosses[i].alpha -= 0.03*(dt/16); if(state.bosses[i].alpha <=0){ state.bosses.splice(i,1); score += 100; updateHUD(); } }
-  }
-
-  // enemy bullets -> player (3 hits -> 1 life)
-  for(let i=state.bulletsE.length-1;i>=0;i--){
-    const eb = state.bulletsE[i];
-    if(overlap({x:eb.x,y:eb.y,w:eb.w,h:eb.h},{x:state.player.x,y:state.player.y,w:state.player.w,h:state.player.h})){
-      state.bulletsE.splice(i,1);
-      if(state.player.shieldUntil > now()) continue;
-      state.player.hitCount = (state.player.hitCount||0) + 1;
-      // blink
-      state.player.blinkUntil = now() + 800;
-      if(state.player.hitCount >= 3){
-        state.player.hitCount = 0;
-        state.player.lives = Math.max(0, state.player.lives - 1);
-        updateHUD();
-        if(state.player.lives <= 0){
-          // game over (simple alert then reload)
-          setTimeout(()=>{ alert('Game Over! Score: '+score); location.reload(); },80);
-          return;
-        }
-      }
-    }
-  }
-
-  // player picks power
-  for(let i=state.powers.length-1;i>=0;i--){
-    const p = state.powers[i];
-    if(overlap({x:p.x,y:p.y,w:p.w,h:p.h},{x:state.player.x,y:state.player.y,w:state.player.w,h:state.player.h})){
-      // apply power
-      if(p.type === 'life'){ state.player.lives = Math.min(3, state.player.lives + 1); showPopup('+1 Life'); }
-      else if(p.type === 'double'){ state.player.doubleFire = true; showPopup('2X Fire (permanent)'); }
-      else if(p.type === 'shield'){ state.player.shieldUntil = now() + 5000; showPopup('Shield (5s)'); }
-      state.powers.splice(i,1);
-      updateHUD();
-    }
-  }
-
-  // Boss spawn logic: first at 200, then every +200
-  if(score >= 200){
-    if(lastBossSpawnScore === null){ spawnBossPair(); lastBossSpawnScore = 200; }
-    else if(score - lastBossSpawnScore >= 200){ spawnBossPair(); lastBossSpawnScore = score; }
-  }
-
-  // automatic background and drawing done in draw()
-  draw();
-  requestAnimationFrame(update);
-}
-
-// draw function
 function draw(){
-  // draw background tiled vertical
-  ctx.clearRect(0,0,W,H);
-  if(imgs.bg){
-    const h = H;
-    const y = (state.bgY % h);
-    ctx.drawImage(imgs.bg, 0, y - h, W, h);
-    ctx.drawImage(imgs.bg, 0, y, W, h);
-  } else {
-    ctx.fillStyle='#071022'; ctx.fillRect(0,0,W,H);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  bgY+=2;
+  if(bgY>=canvas.height) bgY=0;
+  ctx.drawImage(background,0,bgY-canvas.height,canvas.width,canvas.height);
+  ctx.drawImage(background,0,bgY,canvas.width,canvas.height);
+
+  // Player
+  ctx.drawImage(playerImg,player.x,player.y,player.width,player.height);
+
+  // Bullets
+  bullets.forEach((b,i)=>{
+    b.y-=12;
+    ctx.drawImage(bulletGreen,b.x,b.y,b.width,b.height);
+    if(b.y<0) bullets.splice(i,1);
+  });
+
+  // Enemies
+  enemies.forEach((e,ei)=>{
+    e.y+=3;
+    ctx.drawImage(enemyImg,e.x,e.y,e.width,e.height);
+    if(e.y>canvas.height) enemies.splice(ei,1);
+
+    bullets.forEach((b,bi)=>{
+      if(b.x<e.x+e.width && b.x+b.width>e.x && b.y<e.y+e.height && b.y+b.height>e.y){
+        enemies.splice(ei,1);
+        bullets.splice(bi,1);
+        score+=10;
+        spawnBoss();
+      }
+    });
+  });
+
+  // Enemy bullets
+  enemyBullets.forEach((eb,ei)=>{
+    eb.y+=7;
+    ctx.drawImage(bulletRed,eb.x,eb.y,eb.width,eb.height);
+    if(eb.y>canvas.height) enemyBullets.splice(ei,1);
+  });
+
+  // Power
+  if(power){
+    power.y+=3;
+    let imgP=powerDouble;
+    if(power.type==="shield") imgP=powerShield;
+    if(power.type==="life") imgP=powerLife;
+    ctx.drawImage(imgP,power.x,power.y,power.width,power.height);
+
+    if(power.y>canvas.height) power=null;
+    if(power && player.x<power.x+power.width && player.x+player.width>power.x &&
+       player.y<power.y+power.height && player.y+player.height>power.y){
+      if(power.type==="double") doubleFire=true;
+      if(power.type==="shield") shield=true;
+      if(power.type==="life") lives++;
+      power=null;
+    }
   }
 
-  // draw powers
-  state.powers.forEach(p => {
-    const img = (p.type==='life') ? imgs.powerLife : (p.type==='double') ? imgs.powerDouble : imgs.powerShield;
-    ctx.drawImage(img, p.x, p.y, p.w, p.h);
-  });
-
-  // draw enemies
-  state.enemies.forEach(e => {
-    ctx.save(); ctx.globalAlpha = e.fade ? (e.alpha||1) : 1;
-    ctx.drawImage(imgs.enemy, e.x, e.y, e.w, e.h);
-    ctx.restore();
-  });
-
-  // draw bosses
-  state.bosses.forEach(b => {
-    ctx.save(); ctx.globalAlpha = b.fade ? (b.alpha||1) : 1;
-    ctx.drawImage(imgs.boss, b.x, b.y, b.w, b.h);
-    // hp bar
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(b.x, b.y-10, b.w, 6);
-    ctx.fillStyle = 'lime'; ctx.fillRect(b.x, b.y-10, b.w * (b.hp / BOSS_HP), 6);
-    ctx.restore();
-  });
-
-  // draw player (blink if recently hit)
-  if(state.player.blinkUntil && state.player.blinkUntil > now()){
-    if(Math.floor(now()/100) % 2 === 0) ctx.drawImage(imgs.player, state.player.x, state.player.y, state.player.w, state.player.h);
-  } else {
-    ctx.drawImage(imgs.player, state.player.x, state.player.y, state.player.w, state.player.h);
+  // Boss
+  if(boss){
+    ctx.drawImage(bossImg,boss.x,boss.y,boss.width,boss.height);
+    boss.hp<=0 && (boss=null, score+=100);
   }
 
-  // draw bullets
-  state.bulletsP.forEach(b => ctx.drawImage(imgs.bulletP, b.x, b.y, b.w, b.h));
-  state.bulletsE.forEach(b => {
-    const img = (b.color === 'green') ? imgs.bulletP : imgs.bulletE;
-    ctx.drawImage(img, b.x, b.y, b.w, b.h);
-  });
+  // UI
+  ctx.fillStyle="white";
+  ctx.font="20px Arial";
+  ctx.fillText("Score: "+score,20,30);
+  ctx.fillText("Lives: "+lives,20,60);
+  requestAnimationFrame(draw);
 }
-
-// initialization & start
-function start(){
-  loadingEl.style.display = 'none';
-  fit();
-  positionPlayer();
-  updateHUD();
-  ensurePlayBgm();
-
-  // initialize arrays
-  state.bulletsP = [];
-  state.bulletsE = [];
-  state.enemies = [];
-  state.bosses = [];
-  state.powers = [];
-
-  // spawn initial enemies a little
-  for(let i=0;i<2;i++) setTimeout(spawnEnemy, i*350);
-
-  // intervals
-  startIntervals();
-  requestAnimationFrame(update);
-}
-
-// wait images loaded fallback (if any)
-(function waitReady(){
-  if(Object.keys(imgs).length === Object.keys(ASSETS).length){
-    start();
-  } else {
-    setTimeout(waitReady,100);
-  }
-})();
-
-// ensure canvas sized after images available
-document.getElementById('game').addEventListener('resize', fit);
-
+draw();
 </script>
 </body>
 </html>
