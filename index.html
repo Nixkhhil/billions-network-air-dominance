@@ -1,273 +1,192 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Aircraft Game</title>
 <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        background: black;
-        height: 100vh;
-        overflow: hidden;
-    }
-    #gameContainer {
-        position: relative;
-        aspect-ratio: 4 / 3;
-        width: 100vw;
-        max-height: 100vh;
-        background: url('assets/background.png') repeat-y center/cover;
-        overflow: hidden;
-    }
-    #player {
-        position: absolute;
-        width: 60px;
-        height: 60px;
-        background: url('assets/player.png') no-repeat center/contain;
-        bottom: 10%;
-        left: 50%;
-        transform: translateX(-50%);
-    }
-    .enemy, .boss, .bullet, .enemyBullet, .power {
-        position: absolute;
-        background-size: contain;
-        background-repeat: no-repeat;
-    }
-    .enemy { width: 50px; height: 50px; background-image: url('assets/enemy.png'); }
-    .boss { width: 120px; height: 120px; background-image: url('assets/boss.png'); }
-    .bullet { width: 8px; height: 20px; background-image: url('assets/bullet_green.png'); }
-    .enemyBullet { width: 8px; height: 20px; background-image: url('assets/bullet_red.png'); }
-    .power { width: 35px; height: 35px; }
-    #hud {
-        position: absolute;
-        top: 5px; left: 10px;
-        color: white;
-        font-family: sans-serif;
-        font-size: 18px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    #hearts img { width: 25px; height: 25px; }
+  body {
+    margin: 0;
+    background: black;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+
+  canvas {
+    background: url("assets/background.png") no-repeat center center / cover;
+    aspect-ratio: 3 / 4;
+    width: 75vmin;
+    height: auto;
+    border: 2px solid #333;
+    display: block;
+  }
+
+  #lives {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: flex;
+    gap: 5px;
+  }
+
+  #lives img {
+    width: 30px;
+    height: 30px;
+  }
 </style>
 </head>
 <body>
-    <div id="gameContainer">
-        <div id="player"></div>
-        <div id="hud">
-            <div id="score">Score: 0</div>
-            <div id="hearts"></div>
-        </div>
-    </div>
+<canvas id="gameCanvas"></canvas>
+<div id="lives"></div>
+<audio id="bgm" src="sounds/bgm.mpeg" loop autoplay></audio>
 
 <script>
-const container = document.getElementById("gameContainer");
-const player = document.getElementById("player");
-const scoreDisplay = document.getElementById("score");
-const heartsDisplay = document.getElementById("hearts");
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+canvas.width = 450;  // 3:4 ratio
+canvas.height = 600;
 
-const bgMusic = new Audio("sounds/bgm.mpeg");
-bgMusic.loop = true;
-bgMusic.volume = 0.5;
-bgMusic.play().catch(()=>{});
+const bg = new Image();  bg.src = "assets/background.png";
+const playerImg = new Image(); playerImg.src = "assets/player.png";
+const enemyImg = new Image();  enemyImg.src = "assets/enemy.png";
+const bossImg = new Image();   bossImg.src = "assets/boss.png";
+const bulletGreen = new Image(); bulletGreen.src = "assets/bullet_green.png";
+const bulletRed = new Image();   bulletRed.src = "assets/bullet_red.png";
+const heartImg = new Image(); heartImg.src = "assets/heart.png";
 
-let score = 0;
+const bgm = document.getElementById("bgm");
+bgm.volume = 0.5;
+
+const player = { x: canvas.width/2 - 25, y: canvas.height - 90, w: 50, h: 50, speed: 5 };
+let bullets = [];
+let enemies = [];
+let enemyBullets = [];
+let bossBullets = [];
+let boss = null;
+let lastEnemySpawn = 0;
+let lastBossFire = 0;
+let bossSpawned = false;
+let lastShot = 0;
 let lives = 3;
-let playerX = container.clientWidth / 2 - 30;
-let playerY = container.clientHeight * 0.9 - 30;
-let bullets = [], enemies = [], enemyBullets = [], powers = [], bosses = [];
-let gameInterval, enemySpawnInterval, enemyFireInterval, powerSpawnInterval, bossInterval;
-let isDoubleFire = false;
+const livesDiv = document.getElementById("lives");
 
-function updateHearts() {
-    heartsDisplay.innerHTML = "";
-    for (let i = 0; i < lives; i++) {
-        const img = document.createElement("img");
-        img.src = "assets/heart.png";
-        heartsDisplay.appendChild(img);
-    }
+function updateLives() {
+  livesDiv.innerHTML = "";
+  for (let i = 0; i < lives; i++) {
+    const heart = document.createElement("img");
+    heart.src = "assets/heart.png";
+    livesDiv.appendChild(heart);
+  }
 }
-updateHearts();
+updateLives();
 
-function spawnEnemy() {
-    const enemy = document.createElement("div");
-    enemy.classList.add("enemy");
-    enemy.style.left = Math.random() * (container.clientWidth - 50) + "px";
-    enemy.style.top = "-60px";
-    container.appendChild(enemy);
-    enemies.push({el: enemy, hits: 0});
-}
-
-function spawnPower() {
-    const types = ["power_double_fire", "power_shield", "power_extra_life"];
-    const type = types[Math.floor(Math.random() * types.length)];
-    const power = document.createElement("div");
-    power.classList.add("power");
-    power.style.backgroundImage = `url('assets/${type}.png')`;
-    power.dataset.type = type;
-    power.style.left = Math.random() * (container.clientWidth - 40) + "px";
-    power.style.top = "-50px";
-    container.appendChild(power);
-    powers.push(power);
-}
-
-function spawnBoss() {
-    const boss = document.createElement("div");
-    boss.classList.add("boss");
-    boss.style.left = Math.random() * (container.clientWidth - 120) + "px";
-    boss.style.top = "-150px";
-    boss.dataset.health = 40;
-    container.appendChild(boss);
-    bosses.push(boss);
-}
+document.addEventListener("mousemove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  player.x = (e.clientX - rect.left) * scaleX - player.w / 2;
+  player.y = (e.clientY - rect.top) * scaleY - player.h / 2;
+});
 
 function shoot() {
-    const bullet = document.createElement("div");
-    bullet.classList.add("bullet");
-    bullet.style.left = player.offsetLeft + player.offsetWidth/2 - 4 + "px";
-    bullet.style.top = player.offsetTop - 20 + "px";
-    container.appendChild(bullet);
-    bullets.push(bullet);
+  const now = Date.now();
+  if (now - lastShot > 300) {
+    bullets.push({ x: player.x + player.w/2 - 5, y: player.y, w: 10, h: 20, speed: 7 });
+    lastShot = now;
+  }
 }
 
-setInterval(()=> shoot(), 200); // fast fire rate
-
-function enemyFire() {
-    enemies.forEach(e=>{
-        const bullet = document.createElement("div");
-        bullet.classList.add("enemyBullet");
-        bullet.style.left = e.el.offsetLeft + 20 + "px";
-        bullet.style.top = e.el.offsetTop + 40 + "px";
-        container.appendChild(bullet);
-        enemyBullets.push(bullet);
-    });
+function spawnEnemies(timestamp) {
+  if (timestamp - lastEnemySpawn > 2600) {
+    enemies.push({ x: Math.random() * (canvas.width - 40), y: -40, w: 40, h: 40, speed: 2 });
+    lastEnemySpawn = timestamp;
+  }
 }
 
-function update() {
-    // background move
-    container.style.backgroundPositionY = (parseFloat(container.style.backgroundPositionY) || 0) + 2 + "px";
-
-    // bullets move
-    bullets.forEach((b, i) => {
-        b.style.top = b.offsetTop - 8 + "px";
-        if (b.offsetTop < -20) { b.remove(); bullets.splice(i,1); }
-    });
-
-    // enemies move
-    enemies.forEach((e, i) => {
-        e.el.style.top = e.el.offsetTop + 2 + "px";
-        if (e.el.offsetTop > container.clientHeight) {
-            e.el.remove(); enemies.splice(i,1);
-        }
-    });
-
-    // powers move
-    powers.forEach((p, i)=>{
-        p.style.top = p.offsetTop + 2 + "px";
-        if (p.offsetTop > container.clientHeight) { p.remove(); powers.splice(i,1); }
-    });
-
-    // boss move
-    bosses.forEach((b, i)=>{
-        b.style.top = b.offsetTop + 1 + "px";
-        if (b.offsetTop > 100) b.style.top = "100px";
-    });
-
-    // enemy bullets move
-    enemyBullets.forEach((b,i)=>{
-        b.style.top = b.offsetTop + 4 + "px";
-        if (b.offsetTop > container.clientHeight) { b.remove(); enemyBullets.splice(i,1); }
-    });
-
-    // collisions
-    bullets.forEach((b, bi)=>{
-        enemies.forEach((e, ei)=>{
-            if (isColliding(b, e.el)) {
-                e.hits++;
-                b.remove(); bullets.splice(bi,1);
-                if (e.hits >= 3) {
-                    score += 10;
-                    scoreDisplay.textContent = "Score: " + score;
-                    e.el.remove(); enemies.splice(ei,1);
-                    if (score % 200 === 0) spawnBoss();
-                }
-            }
-        });
-        bosses.forEach((boss, bi2)=>{
-            if (isColliding(b, boss)) {
-                let hp = boss.dataset.health - 1;
-                boss.dataset.health = hp;
-                b.remove(); bullets.splice(bi,1);
-                if (hp <= 0) {
-                    score += 100;
-                    scoreDisplay.textContent = "Score: " + score;
-                    boss.remove(); bosses.splice(bi2,1);
-                }
-            }
-        });
-    });
-
-    // player collision with power
-    powers.forEach((p, i)=>{
-        if (isColliding(p, player)) {
-            const type = p.dataset.type;
-            if (type === "power_extra_life" && lives < 3) lives++;
-            if (type === "power_double_fire") isDoubleFire = true;
-            if (type === "power_shield") player.style.opacity = "0.5";
-            updateHearts();
-            p.remove(); powers.splice(i,1);
-        }
-    });
-
-    // enemy bullets hit player
-    enemyBullets.forEach((b,i)=>{
-        if (isColliding(b, player)) {
-            b.remove(); enemyBullets.splice(i,1);
-            if (player.style.opacity === "0.5") return; // shield active
-            lives--;
-            updateHearts();
-            if (lives <= 0) gameOver();
-        }
-    });
+function bossFire(timestamp) {
+  if (boss && timestamp - lastBossFire > 1500) {
+    bossBullets.push({ x: boss.x + boss.w/2 - 5, y: boss.y + boss.h, w: 10, h: 20, speed: 5 });
+    lastBossFire = timestamp;
+  }
 }
 
-function isColliding(a,b){
-    const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
-    return !(ar.right < br.left || ar.left > br.right || ar.bottom < br.top || ar.top > br.bottom);
+function drawAll() {
+  ctx.drawImage(bg, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(playerImg, player.x, player.y, player.w, player.h);
+  bullets.forEach(b => { b.y -= b.speed; ctx.drawImage(bulletGreen, b.x, b.y, b.w, b.h); });
+  enemies.forEach(e => { e.y += e.speed; ctx.drawImage(enemyImg, e.x, e.y, e.w, e.h); });
+  bossBullets.forEach(b => { b.y += b.speed; ctx.drawImage(bulletRed, b.x, b.y, b.w, b.h); });
+  if (boss) ctx.drawImage(bossImg, boss.x, boss.y, boss.w, boss.h);
 }
 
-function gameOver(){
-    clearInterval(gameInterval);
-    clearInterval(enemySpawnInterval);
-    clearInterval(enemyFireInterval);
-    clearInterval(powerSpawnInterval);
-    alert("Game Over! Final Score: "+score);
-    location.reload();
+function isCollide(a,b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-enemySpawnInterval = setInterval(spawnEnemy, 2600);
-enemyFireInterval = setInterval(enemyFire, 2000);
-powerSpawnInterval = setInterval(spawnPower, 2000);
-gameInterval = setInterval(update, 30);
+function handleCollisions() {
+  // bullets vs enemies
+  enemies = enemies.filter(e => {
+    let hit = false;
+    bullets = bullets.filter(b => {
+      if (isCollide(b,e)) hit = true;
+      return !isCollide(b,e);
+    });
+    return !hit;
+  });
 
-// swipe + drag controls
-let startX = null;
-container.addEventListener("touchstart", e=>{
-    startX = e.touches[0].clientX;
-});
-container.addEventListener("touchmove", e=>{
-    if (startX === null) return;
-    let deltaX = e.touches[0].clientX - startX;
-    playerX += deltaX;
-    if (playerX < 0) playerX = 0;
-    if (playerX > container.clientWidth - player.offsetWidth) playerX = container.clientWidth - player.offsetWidth;
-    player.style.left = playerX + "px";
-    startX = e.touches[0].clientX;
-});
-container.addEventListener("touchend", ()=> startX = null);
+  // player vs enemy bullets
+  bossBullets = bossBullets.filter(b => {
+    if (isCollide(b, player)) {
+      lives--;
+      updateLives();
+      return false;
+    }
+    return true;
+  });
+
+  if (lives <= 0) {
+    alert("Game Over!");
+    document.location.reload();
+  }
+
+  // bullets vs boss
+  if (boss) {
+    bullets = bullets.filter(b => {
+      if (isCollide(b,boss)) {
+        boss.hp -= 1;
+        return false;
+      }
+      return true;
+    });
+    if (boss.hp <= 0) boss = null;
+  }
+}
+
+function update(timestamp) {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  shoot();
+  spawnEnemies(timestamp);
+  handleCollisions();
+  drawAll();
+
+  if (!bossSpawned && timestamp > 30000) {
+    boss = { x: canvas.width/2 - 60, y: 30, w: 120, h: 120, speed: 1, dir: 1, hp: 25 };
+    bossSpawned = true;
+  }
+
+  if (boss) {
+    boss.x += boss.speed * boss.dir;
+    if (boss.x <= 0 || boss.x + boss.w >= canvas.width) boss.dir *= -1;
+    bossFire(timestamp);
+  }
+
+  requestAnimationFrame(update);
+}
+
+requestAnimationFrame(update);
 </script>
 </body>
 </html>
