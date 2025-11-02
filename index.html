@@ -5,257 +5,184 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Aircraft Game</title>
 <style>
-  body {
-    margin: 0;
-    overflow: hidden;
-    background: black;
-    touch-action: none;
-  }
-  canvas {
-    display: block;
-    background: url("assets/background.png") repeat-y center/cover;
-  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow: hidden; background: black; }
+  canvas { display: block; margin: auto; background: url('./assets/background.png') repeat-y; background-size: cover; }
+  #lives { position: absolute; top: 10px; left: 10px; display: flex; gap: 5px; }
+  #lives img { width: 30px; height: 30px; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
-<audio id="bgm" src="sounds/bgm.mpeg" loop></audio>
+<canvas id="gameCanvas" width="480" height="800"></canvas>
+<div id="lives"></div>
+<audio id="bgm" src="./sounds/bgm.mpeg" loop></audio>
 
 <script>
-const canvas = document.getElementById("game");
+const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
-canvas.width = innerWidth;
-canvas.height = innerHeight;
-
-// Load images
-const load = (src) => { const i = new Image(); i.src = src; return i; };
-const background = load("assets/background.png");
-const playerImg = load("assets/player.png");
-const enemyImg = load("assets/enemy.png");
-const bossImg = load("assets/boss.png");
-const bulletGreen = load("assets/bullet_green.png");
-const bulletRed = load("assets/bullet_red.png");
-const powerDouble = load("assets/power_double_fire.png");
-const powerShield = load("assets/power_shield.png");
-const powerLife = load("assets/power_extra_life.png");
-const heartImg = load("assets/heart.png");
-
 const bgm = document.getElementById("bgm");
-bgm.play().catch(() => {
-  document.body.addEventListener("click", () => bgm.play(), { once: true });
-});
+bgm.volume = 0.5;
+bgm.play().catch(()=>{});
 
-let bgY = 0, score = 0;
-let lives = 3;
-let doubleFire = false, shield = false;
-let enemies = [], bullets = [], enemyBullets = [], power = null, boss = null, bossBullets = [];
+const playerImg = new Image(); playerImg.src = "./assets/player.png";
+const enemyImg = new Image(); enemyImg.src = "./assets/enemy.png";
+const bossImg = new Image(); bossImg.src = "./assets/boss.png";
+const bulletGreen = new Image(); bulletGreen.src = "./assets/bullet_green.png";
+const bulletRed = new Image(); bulletRed.src = "./assets/bullet_red.png";
+const heartImg = new Image(); heartImg.src = "./assets/heart.png";
 
-const player = {
-  x: canvas.width / 2 - 40,
-  y: canvas.height - 150,
-  width: 80,
-  height: 80,
-};
+let player = { x: canvas.width/2-25, y: canvas.height-100, w: 50, h: 50, bullets: [], canShoot:true };
+let enemies = [], enemyBullets = [], powers = [], boss = null, bossBullets = [];
+let score = 0, lives = 3, lastEnemySpawn = 0, enemySpawnInterval = 2600, lastFire = 0;
+let lastBossSpawn = 0, bossInterval = 200, bossFireCooldown = 0;
 
-// 🔫 Player fires every 0.2s
-setInterval(() => {
-  if (doubleFire) {
-    bullets.push({ x: player.x + 10, y: player.y, width: 15, height: 30 });
-    bullets.push({ x: player.x + player.width - 25, y: player.y, width: 15, height: 30 });
-  } else {
-    bullets.push({ x: player.x + player.width / 2 - 8, y: player.y, width: 15, height: 30 });
+function drawLives(){
+  const livesDiv = document.getElementById("lives");
+  livesDiv.innerHTML = '';
+  for(let i=0;i<lives;i++){
+    const img = document.createElement('img');
+    img.src = "./assets/heart.png";
+    livesDiv.appendChild(img);
   }
-}, 200);
+}
+drawLives();
 
-// 👾 Enemies spawn every 2.6s
-setInterval(() => {
-  enemies.push({ x: Math.random() * (canvas.width - 60), y: -60, width: 60, height: 60, hp: 3 });
-}, 1500);
+function spawnEnemy(){
+  enemies.push({ x: Math.random()*(canvas.width-50), y: -60, w: 50, h: 50 });
+}
+function spawnBoss(){
+  boss = { x: canvas.width/2-75, y: 50, w:150, h:150, hp:30 };
+}
+function shootBullet(){
+  if(!player.canShoot) return;
+  player.bullets.push({x: player.x+player.w/2-5, y: player.y, w:10, h:20});
+  player.canShoot=false;
+  setTimeout(()=>player.canShoot=true,200);
+}
 
-// 💣 Enemies fire every 2s
-setInterval(() => {
-  enemies.forEach(e => {
-    enemyBullets.push({ x: e.x + e.width / 2 - 5, y: e.y + e.height, width: 10, height: 20 });
-  });
-}, 1000);
-
-// ⚡ Powers every 2s
-setInterval(() => {
-  if (!power) {
-    const types = ["double", "shield", "life"];
-    const t = types[Math.floor(Math.random() * types.length)];
-    power = { type: t, x: Math.random() * (canvas.width - 50), y: -50, width: 50, height: 50 };
-  }
-}, 2000);
-
-// 👹 Boss spawn every 200 points
-function spawnBoss() {
-  if (!boss && score >= 200 && score % 200 === 0) {
-    boss = { x: canvas.width / 2 - 100, y: 60, width: 200, height: 200, hp: 40 };
+function moveEverything(delta){
+  player.bullets.forEach(b=>b.y-=300*delta);
+  player.bullets = player.bullets.filter(b=>b.y>-20);
+  enemies.forEach(e=>e.y+=100*delta);
+  enemies = enemies.filter(e=>e.y<canvas.height+50);
+  enemyBullets.forEach(b=>b.y+=200*delta);
+  enemyBullets = enemyBullets.filter(b=>b.y<canvas.height+20);
+  if(boss){
+    bossBullets.forEach(b=>b.y+=300*delta);
+    bossBullets = bossBullets.filter(b=>b.y<canvas.height+20);
   }
 }
 
-// Boss fire every 1.5s (3 lanes)
-setInterval(() => {
-  if (boss) {
-    for (let i = -1; i <= 1; i++) {
-      bossBullets.push({
-        x: boss.x + boss.width / 2 + i * 40,
-        y: boss.y + boss.height,
-        width: 15,
-        height: 25
-      });
-    }
-  }
-}, 800);
-
-// Swipe + drag control
-let startX = null, dragging = false;
-canvas.addEventListener("touchstart", e => { startX = e.touches[0].clientX; });
-canvas.addEventListener("touchmove", e => {
-  const x = e.touches[0].clientX;
-  const dx = x - startX;
-  player.x += dx;
-  if (player.x < 0) player.x = 0;
-  if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
-  startX = x;
-});
-canvas.addEventListener("mousedown", e => { dragging = true; startX = e.clientX; });
-canvas.addEventListener("mousemove", e => {
-  if (dragging) {
-    const dx = e.clientX - startX;
-    player.x += dx;
-    if (player.x < 0) player.x = 0;
-    if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
-    startX = e.clientX;
-  }
-});
-canvas.addEventListener("mouseup", () => dragging = false);
-canvas.addEventListener("mouseleave", () => dragging = false);
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Background
-  bgY += 2;
-  if (bgY >= canvas.height) bgY = 0;
-  ctx.drawImage(background, 0, bgY - canvas.height, canvas.width, canvas.height);
-  ctx.drawImage(background, 0, bgY, canvas.width, canvas.height);
-
-  // Player
-  ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
-
-  // Bullets
-  bullets.forEach((b, i) => {
-    b.y -= 12;
-    ctx.drawImage(bulletGreen, b.x, b.y, b.width, b.height);
-    if (b.y < 0) bullets.splice(i, 1);
+function enemyFire(){
+  enemies.forEach(e=>{
+    enemyBullets.push({x:e.x+e.w/2-5, y:e.y+e.h, w:10, h:20});
   });
-
-  // Enemies
-  enemies.forEach((e, ei) => {
-    e.y += 3;
-    ctx.drawImage(enemyImg, e.x, e.y, e.width, e.height);
-    if (e.y > canvas.height) enemies.splice(ei, 1);
-
-    bullets.forEach((b, bi) => {
-      if (b.x < e.x + e.width && b.x + b.width > e.x && b.y < e.y + e.height && b.y + b.height > e.y) {
-        e.hp--;
-        bullets.splice(bi, 1);
-        if (e.hp <= 0) {
-          enemies.splice(ei, 1);
-          score += 10;
-          spawnBoss();
-        }
-      }
-    });
-  });
-
-  // Enemy bullets
-  enemyBullets.forEach((eb, ei) => {
-    eb.y += 7;
-    ctx.drawImage(bulletRed, eb.x, eb.y, eb.width, eb.height);
-    if (eb.y > canvas.height) enemyBullets.splice(ei, 1);
-    if (eb.x < player.x + player.width && eb.x + eb.width > player.x &&
-        eb.y < player.y + player.height && eb.y + eb.height > player.y) {
-      if (!shield) {
-        lives--;
-        enemyBullets.splice(ei, 1);
-        if (lives <= 0) alert("Game Over! Refresh to restart.");
-      } else {
-        enemyBullets.splice(ei, 1);
-      }
-    }
-  });
-
-  // Powers
-  if (power) {
-    power.y += 3;
-    let img = powerDouble;
-    if (power.type === "shield") img = powerShield;
-    if (power.type === "life") img = powerLife;
-    ctx.drawImage(img, power.x, power.y, power.width, power.height);
-
-    if (power.y > canvas.height) power = null;
-    if (player.x < power.x + power.width && player.x + player.width > power.x &&
-        player.y < power.y + power.height && player.y + player.height > power.y) {
-      if (power.type === "double") doubleFire = true;
-      if (power.type === "shield") shield = true;
-      if (power.type === "life" && lives < 3) lives++;
-      power = null;
-    }
-  }
-
-  // Boss
-  if (boss) {
-    ctx.drawImage(bossImg, boss.x, boss.y, boss.width, boss.height);
-
-    // Boss move slightly side to side
-    boss.x += Math.sin(Date.now() / 500) * 2;
-
-    // Boss bullets
-    bossBullets.forEach((bb, bi) => {
-      bb.y += 8;
-      ctx.drawImage(bulletRed, bb.x, bb.y, bb.width, bb.height);
-      if (bb.y > canvas.height) bossBullets.splice(bi, 1);
-      if (bb.x < player.x + player.width && bb.x + bb.width > player.x &&
-          bb.y < player.y + player.height && bb.y + bb.height > player.y) {
-        if (!shield) {
-          lives--;
-          bossBullets.splice(bi, 1);
-          if (lives <= 0) alert("Game Over! Refresh to restart.");
-        } else {
-          bossBullets.splice(bi, 1);
-        }
-      }
-    });
-
-    // Damage boss
-    bullets.forEach((b, bi) => {
-      if (b.x < boss.x + boss.width && b.x + b.width > boss.x && b.y < boss.y + boss.height && b.y + b.height > boss.y) {
-        boss.hp--;
-        bullets.splice(bi, 1);
-        if (boss.hp <= 0) {
-          score += 200;
-          boss = null;
-        }
-      }
-    });
-  }
-
-  // Score + Hearts
-  ctx.font = "20px Arial";
-  ctx.fillStyle = "white";
-  ctx.fillText("Score: " + score, 20, 30);
-  for (let i = 0; i < lives; i++) {
-    ctx.drawImage(heartImg, 20 + i * 35, 40, 30, 30);
-  }
-
-  requestAnimationFrame(draw);
+}
+function bossFire(){
+  if(!boss) return;
+  bossBullets.push({x: boss.x+boss.w/2-5, y: boss.y+boss.h, w:10, h:20});
 }
 
-draw();
+function checkCollisions(){
+  player.bullets.forEach((b,i)=>{
+    enemies.forEach((e,j)=>{
+      if(b.x<e.x+e.w && b.x+b.w>e.x && b.y<e.y+e.h && b.y+b.h>e.y){
+        player.bullets.splice(i,1); enemies.splice(j,1); score+=10;
+      }
+    });
+    if(boss && b.x<boss.x+boss.w && b.x+b.w>boss.x && b.y<boss.y+boss.h && b.y+b.h>boss.y){
+      player.bullets.splice(i,1);
+      boss.hp--;
+      if(boss.hp<=0){ boss=null; score+=100; }
+    }
+  });
+  enemyBullets.forEach((b,i)=>{
+    if(b.x<player.x+player.w && b.x+b.w>player.x && b.y<player.y+player.h && b.y+b.h>player.y){
+      enemyBullets.splice(i,1);
+      lives--; drawLives();
+      if(lives<=0){ alert("Game Over! Score: "+score); document.location.reload(); }
+    }
+  });
+  if(boss){
+    bossBullets.forEach((b,i)=>{
+      if(b.x<player.x+player.w && b.x+b.w>player.x && b.y<player.y+player.h && b.y+b.h>player.y){
+        bossBullets.splice(i,1);
+        lives--; drawLives();
+        if(lives<=0){ alert("Game Over! Score: "+score); document.location.reload(); }
+      }
+    });
+  }
+}
+
+let lastTime=0;
+function loop(time){
+  const delta=(time-lastTime)/1000; lastTime=time;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  moveEverything(delta);
+  checkCollisions();
+
+  ctx.drawImage(playerImg,player.x,player.y,player.w,player.h);
+  player.bullets.forEach(b=>ctx.drawImage(bulletGreen,b.x,b.y,b.w,b.h));
+  enemies.forEach(e=>ctx.drawImage(enemyImg,e.x,e.y,e.w,e.h));
+  enemyBullets.forEach(b=>ctx.drawImage(bulletRed,b.x,b.y,b.w,b.h));
+  if(boss){
+    ctx.drawImage(bossImg,boss.x,boss.y,boss.w,boss.h);
+    bossBullets.forEach(b=>ctx.drawImage(bulletRed,b.x,b.y,b.w,b.h));
+  }
+
+  if(time-lastEnemySpawn>enemySpawnInterval){
+    spawnEnemy(); lastEnemySpawn=time;
+  }
+  if(time-lastFire>2000){ enemyFire(); lastFire=time; }
+
+  if(score>=lastBossSpawn+bossInterval){
+    spawnBoss(); lastBossSpawn=score;
+  }
+  if(boss){
+    bossFireCooldown+=delta;
+    if(bossFireCooldown>2){ bossFire(); bossFireCooldown=0; }
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+let dragging=false, offsetX=0;
+canvas.addEventListener("mousedown",e=>{
+  if(e.offsetX>player.x && e.offsetX<player.x+player.w && e.offsetY>player.y && e.offsetY<player.y+player.h){
+    dragging=true; offsetX=e.offsetX-player.x;
+  }
+});
+canvas.addEventListener("mouseup",()=>dragging=false);
+canvas.addEventListener("mousemove",e=>{
+  if(dragging){
+    player.x=e.offsetX-offsetX;
+    if(player.x<0) player.x=0;
+    if(player.x>canvas.width-player.w) player.x=canvas.width-player.w;
+  }
+});
+
+canvas.addEventListener("touchstart",e=>{
+  const touch=e.touches[0];
+  if(touch.clientX>player.x && touch.clientX<player.x+player.w && touch.clientY>player.y && touch.clientY<player.y+player.h){
+    dragging=true; offsetX=touch.clientX-player.x;
+  }
+});
+canvas.addEventListener("touchend",()=>dragging=false);
+canvas.addEventListener("touchmove",e=>{
+  if(dragging){
+    const touch=e.touches[0];
+    player.x=touch.clientX-offsetX;
+    if(player.x<0) player.x=0;
+    if(player.x>canvas.width-player.w) player.x=canvas.width-player.w;
+  }
+});
+
+window.addEventListener("keydown",e=>{
+  if(e.code==="Space") shootBullet();
+});
+canvas.addEventListener("click",shootBullet);
 </script>
 </body>
 </html>
-
